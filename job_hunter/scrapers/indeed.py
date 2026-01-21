@@ -1,178 +1,83 @@
-import json
 import time
-import os
-import datetime
-from playwright.sync_api import sync_playwright
+import urllib.parse
+from selenium.webdriver.common.by import By
+from job_hunter.scrapers.base_scraper import BaseScraper
 
-class IndeedJobScraper:
-    def __init__(self, search_url, limit=None):
-        self.search_url = search_url
-        self.limit = int(limit) if limit else None
-        self.jobs = []
-        self.seen_urls = set()
-
-    def scrape(self):
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)
-            page = browser.new_page()
-
-            print(f"Navigating to {self.search_url}...")
-            page.goto(self.search_url)
+class IndeedScraper(BaseScraper):
+    def search(self, keyword, location, limit=10, easy_apply=False):
+        results = []
+        # Indeed URL structure
+        # User requested: https://de.indeed.com/jobs?q=Data%20Analyst&l=Germany&from=searchOnHP
+        base_url = "https://de.indeed.com/jobs?"
+        params = {
+            "q": keyword,
+            "l": location,
+            "from": "searchOnHP"
+        }
+        url = base_url + urllib.parse.urlencode(params)
+        
+        print(f"[Indeed] Navigating to: {url}")
+        self.driver.get(url)
+        self.random_sleep(3, 5)
+        
+        # Check for Cloudflare/Captcha manually if needed (Selenium usually hits this)
+        # Assuming persistent profile helps bypass some, but Indeed is tough.
+        
+        scrolled = 0
+        while len(results) < limit and scrolled < 5:
+            # Extract Cards
+            # Common classes for Indeed: job_seen_beacon, resultContent
+            cards = self.driver.find_elements(By.CLASS_NAME, "job_seen_beacon")
             
-            # Handle cookies (if any)
-            try:
-                print("Checking for Cloudflare/Indeed verification...")
+            print(f"[Indeed] Found {len(cards)} cards on page...")
+            
+            for card in cards:
+                if len(results) >= limit: break
                 try:
-                    # 'div#mosaic-provider-jobcards' is the main container for Indeed jobs
-                    # Wait up to 120s for user to solve CAPTCHA
-                    page.wait_for_selector("div#mosaic-provider-jobcards", timeout=120000)
-                    print("Results loaded! Proceeding...")
-                except:
-                    print("Timed out waiting for results. Challenge not solved or blocking persisting.")
-                
-                # Check for "Accept All" cookies
-                page.wait_for_timeout(2000)
-                # Indeed cookie banner
-                consent_button = page.locator("button#onetrust-accept-btn-handler").first
-                if consent_button.is_visible():
-                    consent_button.click()
-            except:
-                pass
+                    title_elem = card.find_element(By.CSS_SELECTOR, "h2.jobTitle span")
+                    company_elem = card.find_element(By.CSS_SELECTOR, "[data-testid='company-name']")
+                    link_elem = card.find_element(By.CSS_SELECTOR, "a.jcs-JobTitle")
+                    
+                    title = title_elem.text.strip()
+                    company = company_elem.text.strip()
+                    link = link_elem.get_attribute("href")
+                    
+                    # Clean link
+                    if "&" in link and "jk=" in link: 
+                         # Try to extract the tracking ID "jk="
+                         # Example: .../viewjob?jk=12345&...
+                         try:
+                             qs = urllib.parse.urlparse(link).query
+                             parsed = urllib.parse.parse_qs(qs)
+                             jk_val = parsed.get("jk", [None])[0]
+                             if jk_val:
+                                 # Reconstruct a clean URL
+                                 link = f"https://de.indeed.com/viewjob?jk={jk_val}"
+                         except:
+                             pass
 
+                    if not any(j['link'] == link for j in results):
+                        results.append({
+                            "title": title,
+                            "company": company,
+                            "location": location,
+                            "link": link,
+                            "platform": "Indeed"
+                        })
+                except Exception as e:
+                    continue
+            
+            # Pagination / formatting
+            # Indeed pagination is usually a "Next" button at bottom
             try:
-                page_number = 1
-                while True:
-                    if self.limit and len(self.jobs) >= self.limit:
-                        print(f"Limit of {self.limit} reached. Stopping.")
-                        break
-
-                    print(f"Scraping page {page_number}...")
-                    self.collect_job_data(page)
-                    
-                    if self.limit and len(self.jobs) >= self.limit:
-                        break
-                    
-                    # Pagination
-                    # Look for "Next Page" button
-                    try:
-                        # Indeed pagination usually has aria-label="Next Page" or "Next"
-                        next_button = page.locator("a[aria-label='Next Page']").or_(page.locator("a[data-testid='pagination-page-next']")).first
-                        if next_button.is_visible():
-                            next_button.click()
-                            # Wait for new results
-                            page.wait_for_timeout(3000) 
-                            # Sometimes modal pops up asking for email
-                            try:
-                                close_modal = page.locator("button[aria-label='close']").first
-                                if close_modal.is_visible():
-                                    close_modal.click()
-                            except:
-                                pass
-                            
-                            page_number += 1
-                        else:
-                            print("No next page found or end of results.")
-                            break
-                    except:
-                        break
-                        
-            except KeyboardInterrupt:
-                print("Scraping interrupted by user.")
-            except Exception as e:
-                print(f"An error occurred: {e}")
-            finally:
-                self.save_results()
-                browser.close()
-
-    def collect_job_data(self, page):
-        # Indeed job cards
-        # Typically have class 'job_seen_beacon' or 'cardOutline'
-        
-        cards = page.locator("div.job_seen_beacon").all() # Specific enough?
-        if not cards:
-             cards = page.locator("td.resultContent").all()
-        
-        print(f"Found {len(cards)} cards on this page.")
-             
-        for card in cards:
-            if self.limit and len(self.jobs) >= self.limit:
-                return
-
-            try:
-                # Job Title
-                # Usually in an h2.jobTitle > a > span
-                title_elem = card.locator("h2.jobTitle span").first
-                if not title_elem.is_visible():
-                    title_elem = card.locator("h2.jobTitle").first
-                
-                if not title_elem.is_visible(): 
-                     continue
-                     
-                title = title_elem.inner_text().strip()
-                
-                # Company
-                company_elem = card.locator("[data-testid='company-name']").first
-                if company_elem.is_visible():
-                    company = company_elem.inner_text().strip()
-                else:
-                    company = "Unknown"
-                    
-                # Location
-                location = "Unknown"
-                location_elem = card.locator("[data-testid='text-location']").first
-                if not location_elem.is_visible():
-                     location_elem = card.locator(".companyLocation").first
-                
-                if location_elem.is_visible():
-                    location = location_elem.inner_text().strip()
-
-                # Link
-                # The link is usually on the h2 or a parent 'a'
-                link_elem = card.locator("a").first
-                # Sometimes the link is 'jcs-JobTitle'
-                href = link_elem.get_attribute("href")
-                
-                # Resolving href
-                url = href
-                if href:
-                    if href.startswith("/"):
-                        url = "https://de.indeed.com" + href
-                    
-                    # Filter out duplicates
-                    if url in self.seen_urls:
-                        continue
-                    
-                    self.seen_urls.add(url)
-                    
-                    print(f"Found: {title} at {company} ({location})")
-                    self.jobs.append({
-                        "Job Title": title,
-                        "Company": company,
-                        "Location": location,
-                        "Web Address": url,
-                        "Platform": "Indeed",
-                        "Date Extracted": datetime.datetime.now().strftime("%Y-%m-%d")
-                    })
+                next_btn = self.driver.find_element(By.CSS_SELECTOR, "[data-testid='pagination-page-next']")
+                next_btn.click()
+                self.random_sleep(3, 5)
             except:
-                continue
+                print("[Indeed] No more pages.")
+                break
+                
+            scrolled += 1
 
-    def save_results(self):
-        output_file = "data/found_jobs.json"
-        
-        existing_data = []
-        if os.path.exists(output_file):
-            try:
-                with open(output_file, "r", encoding="utf-8") as f:
-                    existing_data = json.load(f)
-            except:
-                pass
-        
-        all_data = existing_data + self.jobs
-        
-        # Deduplication based on URL
-        unique_jobs = {job["Web Address"]: job for job in all_data}
-        final_list = list(unique_jobs.values())
-        
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(final_list, f, indent=4, ensure_ascii=False)
-        print(f"Saved {len(self.jobs)} jobs to {output_file} (Total in file: {len(final_list)})")
+        print(f"[Indeed] Scraped {len(results)} jobs.")
+        return results

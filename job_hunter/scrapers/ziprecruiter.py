@@ -1,152 +1,94 @@
-import json
-import time
-import os
-import datetime
-from playwright.sync_api import sync_playwright
+import urllib.parse
+from selenium.webdriver.common.by import By
+from job_hunter.scrapers.base_scraper import BaseScraper
 
-class ZipRecruiterJobScraper:
-    def __init__(self, search_url, limit=None):
-        self.search_url = search_url
-        self.limit = int(limit) if limit else None
-        self.jobs = []
-        self.seen_urls = set()
+class ZipRecruiterScraper(BaseScraper):
+    def search(self, keyword, location, limit=10, easy_apply=False):
+        results = []
+        # User requested: https://www.ziprecruiter.de/jobs/search?q=Data+Analyst&l=Germany&lat=&long=&d=
+        base_url = "https://www.ziprecruiter.de/jobs/search?"
+        params = {
+            "q": keyword,
+            "l": location,
+            "lat": "",
+            "long": "",
+            "d": ""
+        }
+        url = base_url + urllib.parse.urlencode(params)
+        
+        print(f"[ZipRecruiter] Navigating to: {url}")
+        self.driver.get(url)
+        self.random_sleep(3, 5)
+        
+        scrolled = 0
+        while len(results) < limit and scrolled < 4:
+            # ZipRecruiter DE often uses simple lists
+            cards = self.driver.find_elements(By.CLASS_NAME, "job_content_clickable") or \
+                    self.driver.find_elements(By.CSS_SELECTOR, "article.job_result") or \
+                    self.driver.find_elements(By.CSS_SELECTOR, "li.job-listing")
 
-    def scrape(self):
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)
-            context = browser.new_context()
-            page = context.new_page()
-
-            print(f"Navigating to {self.search_url}...")
-            page.goto(self.search_url)
+            print(f"[ZipRecruiter] Found {len(cards)} cards...")
             
-            # Handle cookies (if any)
-            try:
-                page.wait_for_timeout(3000)
-                # ZipRecruiter often just has a small banner or none for bots?
-                # Check for "Accept All"
-                consent_button = page.locator("button").filter(has_text="Accept").first
-                if consent_button.is_visible():
-                    consent_button.click()
-            except:
-                pass
-
-            try:
-                page_number = 1
-                while True:
-                    if self.limit and len(self.jobs) >= self.limit:
-                        print(f"Limit of {self.limit} reached. Stopping.")
-                        break
-
-                    print(f"Scraping page {page_number}...")
-                    self.collect_job_data(page)
-                    
-                    if self.limit and len(self.jobs) >= self.limit:
-                        break
-                    
-                    # Pagination
-                    # Look for "Next" button. 
-                    # Often has class 'next_page' or 'pagination__next'
-                    next_button = page.locator("a.next_page").or_(
-                        page.locator("a[rel='next']")
-                    ).or_(
-                        page.locator("a[aria-label='Next']")
-                    ).first
-                    
-                    next_class = next_button.get_attribute("class") or ""
-                    if next_button.is_visible() and "disabled" not in next_class:
-                        next_button.click()
-                        time.sleep(3)
-                        page_number += 1
-                    else:
-                        print("No next page found or end of results.")
-                        break
-                        
-            except KeyboardInterrupt:
-                print("Scraping interrupted by user.")
-            except Exception as e:
-                print(f"An error occurred: {e}")
-            finally:
-                self.save_results()
+            for card in cards:
+                if len(results) >= limit: break
                 try:
-                    browser.close()
-                except:
-                    pass
-
-    def collect_job_data(self, page):
-        # ZipRecruiter selectors
-        # Cards seem to be wrapped in divs or lis, but 'div.jobList-intro' contains the info
-        
-        cards = page.locator("div.jobList-intro").all()
-        
-        print(f"Found {len(cards)} cards on this page.")
-             
-        for card in cards:
-            if self.limit and len(self.jobs) >= self.limit:
-                return
-
-            try:
-                # Title
-                title_elem = card.locator("a.jobList-title").first
-                if not title_elem.is_visible(): 
-                     continue
-                     
-                title = title_elem.inner_text().strip()
+                    # Generic Title Extraction: Try headers, then bold text, then links
+                    title = "Zip Job"
+                    title_elem = None
+                    
+                    # Try explicit headers
+                    for tag in ["h2", "h3", "h4", "h5", "a"]:
+                         try: 
+                             elems = card.find_elements(By.TAG_NAME, tag)
+                             for el in elems:
+                                 txt = el.text.strip()
+                                 if txt and len(txt) > 3: # Avoid empty headers
+                                     title_elem = el
+                                     title = txt
+                                     break
+                             if title_elem: break
+                         except: pass
+                    
+                    # Company Extraction
+                    company = "Unknown"
+                    try:
+                        # ZipRecruiter often has a class "company_name" or "company_location"
+                        # Or it's just the next line after title
+                        company_elems = card.find_elements(By.CSS_SELECTOR, ".company_name, .company_location, [class*='company']")
+                        if company_elems:
+                            company = company_elems[0].text.strip()
+                        else:
+                            # Fallback: Split card text
+                            lines = card.text.split("\n")
+                            # Heuristic: Title is usually lines[0], Company lines[1]
+                            if len(lines) > 1 and lines[0] in title:
+                                company = lines[1]
+                            elif len(lines) > 0 and title == "Zip Job":
+                                # If title failed, maybe line 0 is title
+                                title = lines[0]
+                                if len(lines) > 1: company = lines[1]
+                    except: pass
+                    
+                    # Link
+                    link = "https://www.ziprecruiter.de"
+                    try:
+                        link_elems = card.find_elements(By.TAG_NAME, "a")
+                        if link_elems: link = link_elems[0].get_attribute("href")
+                    except: pass
+                    
+                    if not any(j['link'] == link for j in results):
+                        results.append({
+                            "title": title,
+                            "company": company,
+                            "location": location,
+                            "link": link,
+                            "platform": "ZipRecruiter"
+                        })
+                except: continue
                 
-                # Link
-                href = title_elem.get_attribute("href")
-                if not href: continue
-
-                url = href
-                if not url.startswith("http"):
-                    # Relative or root
-                    url = "https://www.ziprecruiter.de" + url
-                
-                if url in self.seen_urls:
-                    continue
-
-                # Company
-                company = "Unknown"
-                location = "Unknown"
-                
-                # Meta usually has Company and Location as adjacent lis
-                meta_items = card.locator(".jobList-introMeta li").all()
-                if len(meta_items) > 0:
-                    company = meta_items[0].inner_text().strip()
-                if len(meta_items) > 1:
-                    location = meta_items[1].inner_text().strip()
-                
-                self.seen_urls.add(url)
-                
-                print(f"Found: {title} at {company} ({location})")
-                self.jobs.append({
-                    "Job Title": title,
-                    "Company": company,
-                    "Location": location,
-                    "Web Address": url,
-                    "Platform": "ZipRecruiter",
-                    "Date Extracted": datetime.datetime.now().strftime("%Y-%m-%d")
-                })
-            except:
-                continue
-
-    def save_results(self):
-        output_file = "data/found_jobs.json"
-        
-        existing_data = []
-        if os.path.exists(output_file):
-            try:
-                with open(output_file, "r", encoding="utf-8") as f:
-                    existing_data = json.load(f)
-            except:
-                pass
-        
-        all_data = existing_data + self.jobs
-        
-        # Deduplication based on URL
-        unique_jobs = {job["Web Address"]: job for job in all_data}
-        final_list = list(unique_jobs.values())
-        
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(final_list, f, indent=4, ensure_ascii=False)
-        print(f"Saved {len(self.jobs)} jobs to {output_file} (Total in file: {len(final_list)})")
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            self.random_sleep(2, 4)
+            scrolled += 1
+            
+        print(f"[ZipRecruiter] Scraped {len(results)} jobs.")
+        return results

@@ -1,170 +1,142 @@
-import json
+import urllib.parse
+from selenium.webdriver.common.by import By
+from job_hunter.scrapers.base_scraper import BaseScraper
 import time
-import os
-import datetime
-from playwright.sync_api import sync_playwright
 
-class XingJobScraper:
-    def __init__(self, search_url, limit=None):
-        self.search_url = search_url
-        self.limit = int(limit) if limit else None
-        self.jobs = []
-        self.seen_urls = set()
-
-    def scrape(self):
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)
-            page = browser.new_page()
-
-            print(f"Navigating to {self.search_url}...")
-            page.goto(self.search_url)
+class XingScraper(BaseScraper):
+    def search(self, keyword, location, limit=10, easy_apply=False):
+        results = []
+        # Reverting to standard search URL.
+        # The user-requested '/ki' path seems to require a session-specific 'id' and redirects to a landing page without it.
+        base_url = "https://www.xing.com/jobs/search?"
+        params = {
+            "keywords": keyword,
+            "location": location
+        }
+        url = base_url + urllib.parse.urlencode(params)
+        
+        print(f"[Xing] Navigating to: {url}")
+        self.driver.get(url)
+        self.random_sleep(3, 5)
+        
+        scrolled = 0
+        while len(results) < limit and scrolled < 5:
+            # Strategy 3: Link-First Discovery (Most Robust)
+            # Find all links that look like job postings
+            links = self.driver.find_elements(By.XPATH, "//a[contains(@href, '/jobs/')]")
             
-            # Handle cookies (Usercentrics)
-            try:
-                page.wait_for_selector("#usercentrics-root", state="attached", timeout=5000)
-                root = page.locator("#usercentrics-root")
-                accept_btn = root.locator("button[data-testid='uc-accept-all-button']").first
-                if accept_btn.is_visible():
-                    accept_btn.click()
-                    print("Cookies accepted.")
-            except:
-                pass
-
-            try:
-                while True:
-                    self.collect_job_data(page)
+            print(f"[Xing] Found {len(links)} potential job links...")
+            
+            for a_tag in links:
+                if len(results) >= limit: break
+                try:
+                    href = a_tag.get_attribute("href")
+                    # Filter out non-job links (e.g. nav, search, login)
+                    if not href: continue
                     
-                    if self.limit and len(self.jobs) >= self.limit:
-                        print(f"Limit of {self.limit} reached. Stopping.")
-                        break
+                    # Blacklist of generic Xing paths
+                    bad_patterns = [
+                        "search?", "login", "/jobs/find", "/jobs/my-jobs", "/jobs/search", 
+                        "/recruiting", "pro.", "xref="
+                    ]
+                    if any(bad in href for bad in bad_patterns): continue
 
-                    # "Show more" button handling
+                    # Title is usually the link text
+                    title = a_tag.text.strip()
+                    if not title or len(title) < 5: 
+                         # Sometimes title is inside a div inside the a
+                         title = a_tag.get_attribute("textContent").strip()
+                    
+                    # Fallback: Parse URL slug if text is still empty
+                    if not title:
+                        # href format: .../jobs/location-title-id or .../jobs/title-location-id
+                        # e.g. .../jobs/berlin-business-data-analyst-12345
+                        try:
+                            slug = href.split("/jobs/")[-1]
+                            # Remove trailing query params
+                            slug = slug.split("?")[0]
+                            # Split by hyphen
+                            parts = slug.split("-")
+                            # Remove the last part if it's a number (ID)
+                            if parts[-1].isdigit(): parts.pop()
+                            
+                            # Reconstruct
+                            title = " ".join(parts).title()
+                        except: pass
+                    
+                    # Ignore generic titles
+                    if title.lower() in ["jobs", "search", "find jobs", "create a job ad", "your jobs"]: continue
+                    if not title: continue # Skip empty links
+                    
+                    # Company extraction: Look at parent text
+                    company = "Unknown"
                     try:
-                        more_button = page.locator("button[data-testid='search-load-more-button']").first
-                        if more_button.is_visible():
-                            more_button.click()
-                            time.sleep(3) # Wait for content
-                        else:
-                            print("No more results.")
-                            break
-                    except:
-                        break
+                        # Go up to the card container (likely li or article or div)
+                        # We try going up 1-3 levels
+                        parent = a_tag.find_element(By.XPATH, "./..")
+                        grandparent = parent.find_element(By.XPATH, "./..")
                         
-            except KeyboardInterrupt:
-                print("Scraping interrupted by user.")
-            except Exception as e:
-                print(f"An error occurred: {e}")
-            finally:
-                self.save_results()
-                browser.close()
-
-    def collect_job_data(self, page):
-        # Existing Logic
-        # Try generic article first, as data-testid might have changed
-        cards = page.locator("article").all()
-        
-        print(f"Found {len(cards)} articles.")
-        
-        for card in cards:
-            if self.limit and len(self.jobs) >= self.limit:
-                return
-
-            try:
-                # Title
-                # Try h3 first (common in Xing)
-                title_elem = card.locator("h3 a").first
-                if not title_elem.is_visible():
-                     title_elem = card.locator("a[href*='/jobs/']").first
-                
-                if not title_elem.is_visible(): continue
-                link = title_elem
-                
-                title = title_elem.inner_text().strip()
-                href = link.get_attribute("href")
-                
-                # Fallback if title is empty (happens if link wraps strict structure)
-                card_text = card.inner_text()
-                lines = [line.strip() for line in card_text.split('\n') if line.strip()]
-                
-                if not title and len(lines) > 0:
-                    title = lines[0]
-                
-                # Resolve URL
-                url = href
-                if not url.startswith("http"):
-                    url = "https://www.xing.com" + url
-                
-                # Deduplication logic
-                if url in self.seen_urls:
-                    continue
-
-                company = "Unknown"
-                location = "Unknown"
-                
-                # Heuristic parsing of lines
-                # Lines usually: [ "Be an early applicant", "Data Analyst", "Company", "Location" ]
-                # OR: [ "Data Analyst", "Company", "Location" ]
-                
-                parsed_title = title
-                parsed_company = "Unknown"
-                parsed_location = "Unknown"
-                
-                clean_lines = []
-                for line in lines:
-                    # Filter out the garbage label immediately
-                    if "be an early applicant" not in line.lower() and "neu" != line and "new" != line:
-                        clean_lines.append(line)
-                
-                if len(clean_lines) > 0:
-                    parsed_title = clean_lines[0]
-                if len(clean_lines) > 1:
-                    parsed_company = clean_lines[1]
-                if len(clean_lines) > 2:
-                    parsed_location = clean_lines[2]
+                        # Get full text of the card
+                        card_text = grandparent.text
+                        lines = [l.strip() for l in card_text.split("\n") if l.strip()]
+                        
+                        # Heuristic: If Title is line X, Company is usually X+1
+                        # Find title in lines (fuzzy match)
+                        for i, line in enumerate(lines):
+                            # The slug-derived title might not match text exactly
+                            # So just take the first line that isn't the title or "New" badge
+                            if len(line) > 3 and line.lower() not in title.lower() and "new" not in line.lower():
+                                 company = line
+                                 # If company is "Kununu", skip
+                                 if "kununu" in company.lower(): continue
+                                 break
+                    except: pass
                     
-                # Assign back
-                title = parsed_title
-                company = parsed_company
-                location = parsed_location
+                    if company == "Unknown": company = "Xing Employer"
+                    
+                    if not any(j['link'] == href for j in results):
+                        results.append({
+                            "title": title,
+                            "company": company,
+                            "location": location,
+                            "link": href,
+                            "platform": "Xing"
+                        })
+                except: continue
+            
+            # Scroll logic
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            self.random_sleep(2, 4)
+            scrolled += 1
 
-                # Final cleanup just in case
-                if title.lower().startswith("be an early applicant"):
-                     title = "Unknown" 
-                
-                self.seen_urls.add(url)
-                print(f"Found: {title} at {company} ({location})") 
+        print(f"[Xing] Scraped {len(results)} jobs.")
+        
+        if easy_apply and results:
+            print(f"[Xing] 🕵️ Filtering {len(results)} jobs for 'Easy Apply'...")
+            easy_apply_results = []
+            for i, job in enumerate(results):
+                try:
+                    print(f"   [{i+1}/{len(results)}] Checking: {job['title']}...")
+                    self.driver.get(job['link'])
+                    self.random_sleep(2, 4)
+                    
+                    # Logic: Check for indicators of Easy Apply
+                    # Indicators: "Schnellbewerbung" text, or specific internal application buttons.
+                    # We check page text for simplicity and speed.
+                    page_source = self.driver.page_source.lower()
+                    
+                    # "schnellbewerbung" is the German term for Easy Apply on Xing
+                    # "easy apply" might appear in English interface
+                    if "schnellbewerbung" in page_source or "easy apply" in page_source:
+                        print(f"      ✅ Found Easy Apply!")
+                        easy_apply_results.append(job)
+                    else:
+                        print(f"      ❌ Standard Apply only.")
+                        
+                except Exception as e:
+                    print(f"      ⚠️ Error checking job: {e}")
+            
+            print(f"[Xing] Filtered down to {len(easy_apply_results)} Easy Apply jobs.")
+            return easy_apply_results
 
-                self.seen_urls.add(url)
-                print(f"Found: {title} at {company} ({location})") 
-                
-                self.jobs.append({
-                    "Job Title": title,
-                    "Company": company,
-                    "Location": location,
-                    "Web Address": url,
-                    "Platform": "Xing",
-                    "Date Extracted": datetime.datetime.now().strftime("%Y-%m-%d")
-                })
-            except Exception as e:
-                continue
-
-    def save_results(self):
-        output_file = "data/found_jobs.json"
-        
-        existing_data = []
-        if os.path.exists(output_file):
-            try:
-                with open(output_file, "r", encoding="utf-8") as f:
-                    existing_data = json.load(f)
-            except:
-                pass
-        
-        all_data = existing_data + self.jobs
-        
-        # Deduplication based on URL
-        unique_jobs = {job["Web Address"]: job for job in all_data}
-        final_list = list(unique_jobs.values())
-        
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(final_list, f, indent=4, ensure_ascii=False)
-        print(f"Saved {len(self.jobs)} jobs to {output_file} (Total in file: {len(final_list)})")
+        return results

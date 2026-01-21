@@ -1,44 +1,26 @@
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
-*.so
-
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# Virtual Environments
 venv/
-env/
-ENV/
-env.bak/
-venv.bak/
-
-# Project Specific
-data/
-*.log
-.vscode/
-.idea/
-.DS_Store
+.env
 
 # Streamlit
-.streamlit/secrets.toml
+.streamlit/
+
+# Selenium / Chrome
+chrome_data/
+chromedriver.exe
+geckodriver.exe
+*.log
+
+# Project Data (Private/Local)
+data/
+# Keep the directory structure but ignore contents? 
+# If you want to commit the folders but not files, add .gitkeep inside them manually.
+# For now, ignoring the whole data folder as it contains resumes and scraped json.
+debug_xing.py
+
+# OS
+.DS_Store
+Thumbs.db

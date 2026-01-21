@@ -1,4 +1,14 @@
-streamlit
+# Core App & Data
+streamlit>=1.35.0
 pandas
-playwright
-pytest-playwright
+python-dotenv
+pdfplumber
+
+# Browser Automation
+selenium
+webdriver-manager
+
+# AI & Agents
+crewai
+langchain-google-genai
+google-generativeai
