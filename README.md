@@ -1,4 +1,4 @@
-# 🚀 CareerCommander
+# 🚀 CareerCommander(Mini)
 
 **Your AI-Powered Job Hunting Partner.**  
 *Scout jobs, analyze requirements, and dominate your applications with autonomous AI agents.*
