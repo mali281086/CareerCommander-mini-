@@ -102,7 +102,7 @@ class JobAnalysisCrew:
         agent_humanizer = Agent(
             role='Senior Executive Editor',
             goal='Refine the cover letter to be 100% professional, formal, and human. Eliminate robotic patterns and over-conversational "AI-humanizing" fillers while maintaining a sophisticated, authoritative tone.',
-            backstory="You are an expert editor specializing in professional corporate communication. You understand that in a professional context, especially in regions like Germany, "humanization" means clarity, precision, and authentic professional voice—not casual slang or conversational fillers. You excel at varying sentence structure and vocabulary to bypass AI detection while maintaining a formal executive tone.",
+            backstory="You are an expert editor specializing in professional corporate communication. You understand that in a professional context, especially in regions like Germany, \"humanization\" means clarity, precision, and authentic professional voice—not casual slang or conversational fillers. You excel at varying sentence structure and vocabulary to bypass AI detection while maintaining a formal executive tone.",
             verbose=True,
             allow_delegation=False,
             llm=llm
