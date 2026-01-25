@@ -8,6 +8,7 @@ import json
 import glob
 import base64
 import time
+import random
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -316,6 +317,9 @@ with st.sidebar:
          
     if st.button("📂 View Applied Jobs", width="stretch"):
          navigate_to('applied')
+
+    if st.button("🤝 Networking", width="stretch"):
+         navigate_to('networking')
          
     st.divider()
     st.markdown(
@@ -1081,6 +1085,19 @@ elif st.session_state['page'] == 'explorer':
                         st.info("ℹ️ Run AI Analysis to generate a Cover Letter.")
                     else:
                         st.subheader("📝 AI Cover Letter")
+
+                        # Humanization Score
+                        h_score = analysis_results.get("humanization_score", 0)
+                        if h_score > 0:
+                            st.write(f"**Humanization Level:** {h_score}%")
+                            st.progress(h_score / 100)
+                            if h_score > 90:
+                                st.success("✅ This letter is highly humanized and likely to bypass AI detectors.")
+                            elif h_score > 70:
+                                st.info("ℹ️ This letter has good humanization but could be improved further.")
+                            else:
+                                st.warning("⚠️ Humanization score is low. Consider manual editing.")
+
                         cover_letter = analysis_results.get("cover_letter", "No cover letter generated yet.")
                         st.text_area("Cover Letter", cover_letter, height=500)
                     
@@ -1183,6 +1200,55 @@ elif st.session_state['page'] == 'explorer':
         with st.expander("📈 Metrics and Visualisations", expanded=False):
             render_metrics_dashboard(df, st.session_state['applied_jobs'], len(db.load_parked()))
 
+
+# ==========================================
+# VIEW 4: NETWORKING (LINKEDIN OUTREACH)
+# ==========================================
+elif st.session_state['page'] == 'networking':
+    st.title("🤝 LinkedIn Networking Outreach")
+    st.write("Connect with your existing LinkedIn contacts in specific regions.")
+
+    with st.container(border=True):
+        st.subheader("1. Setup Outreach")
+        outreach_loc = st.text_input("Target Region/Location", value="Germany")
+        outreach_limit = st.number_input("Max Contacts to Message", value=5, min_value=1, max_value=20)
+
+        default_msg = "Hi {first_name},\n\nI hope you are doing well. I am currently exploring new opportunities in the job market and noticed you are based in {location}. I was wondering if you might have any leads or advice for someone with my background. Any assistance would be greatly appreciated!\n\nBest regards,"
+        outreach_msg = st.text_area("Message Template", value=default_msg.replace("{location}", outreach_loc), height=200, help="Use {first_name} as a placeholder.")
+
+    if st.button("🔍 Find and Message Contacts", type="primary"):
+        from job_hunter.scrapers.linkedin_outreach import LinkedInOutreach
+        outreach = LinkedInOutreach()
+
+        try:
+            status_box = st.empty()
+            status_box.info(f"Searching for 1st-degree connections in **{outreach_loc}**...")
+
+            connections = outreach.search_connections(outreach_loc, limit=outreach_limit)
+
+            if not connections:
+                status_box.warning("No connections found for the given criteria. Make sure you are logged in to LinkedIn.")
+            else:
+                status_box.success(f"Found {len(connections)} connections. Starting outreach...")
+
+                progress_bar = st.progress(0)
+                for i, conn in enumerate(connections):
+                    status_box.info(f"Sending message to **{conn['name']}** ({i+1}/{len(connections)})...")
+                    success = outreach.send_message(conn, outreach_msg)
+                    if success:
+                        st.toast(f"✅ Message sent to {conn['name']}")
+                    else:
+                        st.error(f"❌ Failed to send message to {conn['name']}")
+
+                    progress_bar.progress((i + 1) / len(connections))
+                    time.sleep(random.uniform(2, 5))
+
+                status_box.success("🎉 Outreach mission complete!")
+
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+        finally:
+            outreach.close()
 
 # ==========================================
 # VIEW 3: APPLIED JOBS (HISTORY)
@@ -1353,6 +1419,13 @@ elif st.session_state['page'] == 'applied':
 
                 with t2:
                      st.subheader("📝 AI Cover Letter")
+
+                     # Humanization Score
+                     h_score = res.get("humanization_score", 0)
+                     if h_score > 0:
+                         st.write(f"**Humanization Level:** {h_score}%")
+                         st.progress(h_score / 100)
+
                      cover_letter = res.get("cover_letter", "No cover letter generated.")
                      st.text_area("Cover Letter", cover_letter, height=500)
                 
