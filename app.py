@@ -998,9 +998,22 @@ elif st.session_state['page'] == 'explorer':
                     st.error("❌ No active resumes found.")
                     selected_resume_data = {"text": "", "bytes": None}
                 else:
-                    col_sel_res, _ = st.columns([2, 2])
+                    col_sel_res, col_sel_comp = st.columns([2, 2])
                     selected_resume_key = col_sel_res.selectbox("Using Persona:", available_resumes, index=available_resumes.index(selected_resume_key) if selected_resume_key in available_resumes else 0)
                     selected_resume_data = st.session_state['resumes'][selected_resume_key]
+
+                    analysis_options = {
+                        "Cover Letter": "cover_letter",
+                        "Company Intel": "intel",
+                        "ATS Match": "ats",
+                        "Strategized Resume": "resume"
+                    }
+                    selected_components = col_sel_comp.multiselect(
+                        "Analyze Components:",
+                        options=list(analysis_options.keys()),
+                        default=["Cover Letter"],
+                        help="Select which AI analysis components to run. Fewer components save API quota."
+                    )
 
                 # Action Bar
                 c_act1, c_act2, c_act3 = st.columns([2, 2, 2])
@@ -1028,7 +1041,7 @@ elif st.session_state['page'] == 'explorer':
                     can_run = has_resume and has_details
                     btn_text = "🔄 Re-Analyze" if is_cached else "✨ Run AI Analysis"
                     
-                    if st.button(btn_text, type="primary" if not is_cached else "secondary", disabled=not can_run, width="stretch"):
+                    if st.button(btn_text, type="primary" if not is_cached else "secondary", disabled=not can_run or not selected_components, width="stretch"):
                          with st.spinner(f"Analyzing for '{selected_resume_key}'..."):
                             scraped_jd = job.get('Job Description', '')
                             if job.get('Rich Description'): scraped_jd = job.get('Rich Description')
@@ -1040,7 +1053,15 @@ elif st.session_state['page'] == 'explorer':
                                 context += "\n(Text unavailable.)"
                             try:
                                 crew = JobAnalysisCrew(context, selected_resume_data['text'])
-                                results = crew.run_analysis()
+                                comp_keys = [analysis_options[c] for c in selected_components]
+                                results = crew.run_analysis(components=comp_keys)
+
+                                # Merge with existing cache if any
+                                if job_id in st.session_state['job_cache']:
+                                    new_results = st.session_state['job_cache'][job_id].copy()
+                                    new_results.update(results)
+                                    results = new_results
+
                                 st.session_state['job_cache'][job_id] = results
                                 st.session_state['job_cache'] = db.save_cache(job_id, results)
                                 if is_applied:
@@ -1151,11 +1172,8 @@ elif st.session_state['page'] == 'explorer':
                         with st.chat_message(msg["role"]): st.write(msg["content"])
                     
                     chat_placeholder = "Ask about this job..."
-                    if not is_analyzed:
-                        st.info("ℹ️ Chat is available after AI Analysis.")
-                        chat_placeholder = "Run Analysis to enable chat"
 
-                    if user_query := st.chat_input(chat_placeholder, key=f"chat_{job_id}", disabled=not is_analyzed):
+                    if user_query := st.chat_input(chat_placeholder, key=f"chat_{job_id}"):
                         st.session_state.chat_history[job_id].append({"role": "user", "content": user_query})
                         with st.chat_message("user"): st.write(user_query)
                         with st.chat_message("assistant"):
