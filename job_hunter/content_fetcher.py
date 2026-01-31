@@ -8,6 +8,7 @@ from tools.browser_manager import BrowserManager
 
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
+from langdetect import detect
 
 class ContentFetcher:
     def __init__(self):
@@ -197,8 +198,17 @@ class ContentFetcher:
                          data['description'] = body.text[:8000]
                     except: pass
 
+
             # --- CLEANING ---
             data['description'] = self._clean_text(data['description'], platform)
+
+            # --- LANGUAGE DETECTION ---
+            data['language'] = "en" # Default
+            try:
+                if data['description'] and len(data['description']) > 50:
+                     lang = detect(data['description'])
+                     data['language'] = lang
+            except: pass
 
             return data
 

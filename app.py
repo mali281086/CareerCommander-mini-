@@ -422,7 +422,8 @@ def load_data():
         "link": "Web Address",
         "platform": "Platform",
         "description": "Job Description",
-        "rich_description": "Rich Description"
+        "rich_description": "Rich Description",
+        "language": "Language"
     }
     df = df.rename(columns=rename_map)
     
@@ -563,7 +564,7 @@ if st.session_state['page'] == 'home':
         scrape_location = c1.text_input("Target Location(s) (separate by ';')", value=st.session_state.get('scrape_location', "Germany"), help="e.g. Berlin; Munich; Hamburg")
         st.session_state['scrape_location'] = scrape_location
         
-        scrape_limit = c2.number_input("Limit per Role & Platform", value=30, step=10)
+        scrape_limit = c2.number_input("Limit per Role & Platform", value=30, step=10, min_value=1, max_value=5000)
         
         c_easy, c_ph = st.columns([1, 1])
         easy_apply_only = c_easy.toggle("✨ Easy Apply Only", value=False, help="Restricts to LinkedIn & Xing. Filters for Easy Apply jobs.")
@@ -706,31 +707,60 @@ elif st.session_state['page'] == 'explorer':
                  updated_count = 0
                  
                  for i, job_row in enumerate(jobs_to_process):
-                     if job_row.get("Rich Description") and len(str(job_row.get("Rich Description"))) > 100:
-                         continue
-                         
-                     status_txt.text(f"Fetching {i+1}/{total_fetch}: {job_row.get('Job Title')}")
-                     
-                     url = job_row.get("Web Address") or job_row.get("link")
-                     platform = job_row.get("Platform") or job_row.get("platform")
-                     
-                     details = fetcher.fetch_details(url, platform)
-                     if details:
-                         # Match by LINK
-                         target_link = job_row.get("Web Address") or job_row.get("link")
-                         scouted_data = db.load_scouted()
-                         for s_job in scouted_data:
-                             if s_job.get('link') == target_link:
-                                 s_job['rich_description'] = details.get('description', '')
-                                 new_company = details.get('company')
-                                 if new_company and new_company != s_job.get('company'):
-                                     if "earn up to" not in new_company.lower():
-                                         s_job['company'] = new_company
-                                 break
-                         db.save_scouted_jobs(scouted_data, append=False)
-                         updated_count += 1
-                     
-                     prog_bar.progress((i + 1) / total_fetch)
+                    # CHECK: Do we need to process this?
+                    has_desc = job_row.get("Rich Description") and len(str(job_row.get("Rich Description"))) > 100
+                    has_lang = job_row.get("Language") and job_row.get("Language") not in ["Unknown", "None", None]
+                    
+                    # 1. OPTIMIZED SKIP: If we have both, truly skip
+                    if has_desc and has_lang:
+                        prog_bar.progress((i + 1) / total_fetch)
+                        continue
+
+                    # 2. BACKFILL: If we have desc but no lang, just detect locally!
+                    if has_desc and not has_lang:
+                        status_txt.text(f"Detecting Language {i+1}/{total_fetch}: {job_row.get('Job Title')}")
+                        try:
+                           from langdetect import detect
+                           txt = str(job_row.get("Rich Description"))
+                           detected_lang = detect(txt) if len(txt) > 50 else "en"
+                           
+                           # SAVE
+                           target_link = job_row.get("Web Address") or job_row.get("link")
+                           scouted_data = db.load_scouted()
+                           for s_job in scouted_data:
+                               if s_job.get('link') == target_link:
+                                   s_job['language'] = detected_lang
+                                   break
+                           db.save_scouted_jobs(scouted_data, append=False)
+                           updated_count += 1
+                        except: pass
+                        prog_bar.progress((i + 1) / total_fetch)
+                        continue
+
+                    # 3. FULL FETCH: Missing Desc (and likely Lang)
+                    status_txt.text(f"Fetching {i+1}/{total_fetch}: {job_row.get('Job Title')}")
+                    
+                    url = job_row.get("Web Address") or job_row.get("link")
+                    platform = job_row.get("Platform") or job_row.get("platform")
+                    
+                    details = fetcher.fetch_details(url, platform)
+                    if details:
+                        # Match by LINK
+                        target_link = job_row.get("Web Address") or job_row.get("link")
+                        scouted_data = db.load_scouted()
+                        for s_job in scouted_data:
+                            if s_job.get('link') == target_link:
+                                s_job['rich_description'] = details.get('description', '')
+                                s_job['language'] = details.get('language', 'Unknown')
+                                new_company = details.get('company')
+                                if new_company and new_company != s_job.get('company'):
+                                    if "earn up to" not in new_company.lower():
+                                        s_job['company'] = new_company
+                                break
+                        db.save_scouted_jobs(scouted_data, append=False)
+                        updated_count += 1
+                    
+                    prog_bar.progress((i + 1) / total_fetch)
                  
                  fetcher.close()
                  st.toast(f"Updated {updated_count} jobs with deep details!")
@@ -839,6 +869,7 @@ elif st.session_state['page'] == 'explorer':
                     "Found_job": st.column_config.TextColumn("Target Role", width="medium"), 
                     "Status": st.column_config.TextColumn("Status", width="small"),
                     "description": st.column_config.TextColumn("Original Desc", width="small"), 
+                    "language": st.column_config.TextColumn("Language", width="small"),
                 }
             
             if "Index" in display_df.columns:
@@ -863,10 +894,51 @@ elif st.session_state['page'] == 'explorer':
                      st.toast(f"Archived {archived_count} jobs from current view!", icon="🧹")
                      st.cache_data.clear()
                      st.rerun()
-                 else:
                      st.toast("No new applied jobs to archive.", icon="ℹ️")
 
+            # a4. BULK ACTIONS (LANGUAGE)
+            with st.expander("⚡ Bulk Actions (Language)", expanded=False):
+                st.caption("Perform actions on ALL jobs matching a specific language.")
+                
+                # Get available languages from filtered view
+                if "Language" in filtered.columns:
+                     langs = filtered["Language"].astype(str).unique().tolist()
+                else: langs = []
+                
+                if langs:
+                    c_b_sel, c_b_btn1, c_b_btn2 = st.columns([2, 1, 1])
+                    selected_bulk_lang = c_b_sel.selectbox("Select Language", langs, key="bulk_lang_sel")
+                    
+                    # Count impacted
+                    count_impact = len(filtered[filtered["Language"].astype(str) == selected_bulk_lang])
+                    c_b_sel.caption(f"Impacts {count_impact} jobs.")
+                    
+                    if c_b_btn1.button(f"🗑️ Delete All '{selected_bulk_lang}'", use_container_width=True, type="primary"):
+                         # Execute Delete
+                         jobs_to_del = filtered[filtered["Language"].astype(str) == selected_bulk_lang].to_dict('records')
+                         for j in jobs_to_del:
+                             db.delete_scouted_job(j.get('Job Title'), j.get('Company'))
+                         
+                         st.toast(f"Deleted {len(jobs_to_del)} jobs!", icon="🗑️")
+                         st.cache_data.clear()
+                         st.rerun()
 
+                    if c_b_btn2.button(f"🅿️ Park All '{selected_bulk_lang}'", use_container_width=True):
+                         # Execute Park
+                         jobs_to_park = filtered[filtered["Language"].astype(str) == selected_bulk_lang].to_dict('records')
+                         for j in jobs_to_park:
+                             # Reconstruct full row dict for parking logic if needed
+                             # But db.park_job expects minimal or we give it what we have
+                             # The UI columns might be renamed, we need to map back if park_job relies on 'link' vs 'Web Address'
+                             # Fortunately park_job handles flexible keys or we pass the dict
+                             # Let's ensure keys match what park_job expects (it checks 'link'/'platform' inside)
+                             db.park_job(j.get('Job Title'), j.get('Company'), j)
+                             
+                         st.toast(f"Parked {len(jobs_to_park)} jobs!", icon="🅿️")
+                         st.cache_data.clear()
+                         st.rerun()
+                else:
+                    st.info("No language data available to filter.")
             # Change Detection Logic (Inside Expander or just before Analysis)
             # We keep it here to run before Analysis panel rendering updates
             changes_detected = False

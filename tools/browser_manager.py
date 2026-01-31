@@ -3,7 +3,7 @@ import time
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
+
 
 class BrowserManager:
     _instance = None
@@ -52,8 +52,8 @@ class BrowserManager:
 
         # Service
         try:
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=options)
+            # Selenium 4.6+ manages drivers automatically!
+            driver = webdriver.Chrome(options=options)
             self._driver = driver
             print(f"Browser launched with profile: {user_data_dir}")
             return driver
