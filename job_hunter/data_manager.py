@@ -421,4 +421,102 @@ class DataManager:
         with open(AUDIT_FILE, "w", encoding="utf-8") as f:
             f.write(new_content)
 
+    # --- BOT CONFIG (Question-Answer Mappings) ---
+    def load_bot_config(self):
+        """Load bot configuration including answer mappings and unknown questions."""
+        config_file = os.path.join(DATA_DIR, "bot_config.json")
+        default_config = {
+            "answers": {
+                "years of experience": "3",
+                "how many years": "3",
+                "authorized to work": "Yes",
+                "require sponsorship": "No",
+                "willing to relocate": "Yes",
+                "remote work": "Yes",
+                "notice period": "2 weeks",
+                "when can you start": "Immediately",
+            },
+            "unknown_questions": []
+        }
+        
+        if not os.path.exists(config_file):
+            with open(config_file, "w", encoding="utf-8") as f:
+                json.dump(default_config, f, indent=2)
+            return default_config
+        
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return default_config
+    
+    def save_bot_config(self, config):
+        """Save bot configuration."""
+        config_file = os.path.join(DATA_DIR, "bot_config.json")
+        with open(config_file, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+    
+    def add_answer(self, question_pattern, answer):
+        """Add or update an answer for a question pattern."""
+        config = self.load_bot_config()
+        config["answers"][question_pattern.lower().strip()] = answer
+        # Remove from unknown if it was there
+        q_lower = question_pattern.lower().strip()
+        config["unknown_questions"] = [q for q in config["unknown_questions"] if q.get("question", "").lower() != q_lower]
+        self.save_bot_config(config)
+        return config
+    
+    def delete_answer(self, question_pattern):
+        """Delete an answer mapping."""
+        config = self.load_bot_config()
+        q_lower = question_pattern.lower().strip()
+        if q_lower in config["answers"]:
+            del config["answers"][q_lower]
+            self.save_bot_config(config)
+        return config
+    
+    def log_unknown_question(self, question_text, job_title="", company=""):
+        """Log an unknown question encountered during auto-apply."""
+        config = self.load_bot_config()
+        
+        # Check if already logged
+        q_lower = question_text.lower().strip()
+        for q in config["unknown_questions"]:
+            if q.get("question", "").lower() == q_lower:
+                return config  # Already logged
+        
+        # Add new unknown question
+        config["unknown_questions"].append({
+            "question": question_text.strip(),
+            "job_title": job_title,
+            "company": company,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        self.save_bot_config(config)
+        return config
+    
+    def clear_unknown_questions(self):
+        """Clear all unknown questions."""
+        config = self.load_bot_config()
+        config["unknown_questions"] = []
+        self.save_bot_config(config)
+        return config
+    
+    def get_answer_for_question(self, question_text):
+        """Find the best matching answer for a question."""
+        config = self.load_bot_config()
+        q_lower = question_text.lower().strip()
+        
+        # Exact match first
+        if q_lower in config["answers"]:
+            return config["answers"][q_lower]
+        
+        # Partial match
+        for pattern, answer in config["answers"].items():
+            if pattern in q_lower or q_lower in pattern:
+                return answer
+        
+        return None  # No match found
+
 

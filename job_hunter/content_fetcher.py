@@ -127,9 +127,47 @@ class ContentFetcher:
             # --- Indeed ---
             elif "indeed" in p_lower:
                 try:
-                    desc_el = driver.find_element(By.ID, "jobDescriptionText")
-                    if desc_el: data['description'] = desc_el.text
-                except: pass
+                    # Wait for page to fully load
+                    time.sleep(3)
+                    
+                    # Try multiple selectors - Indeed changes these frequently
+                    desc_selectors = [
+                        "#jobDescriptionText",
+                        "[id*='jobDescription']",
+                        ".jobsearch-JobComponent-description",
+                        ".jobsearch-jobDescriptionText",
+                        "[data-testid='job-description']",
+                        ".job-description"
+                    ]
+                    
+                    desc_el = None
+                    for selector in desc_selectors:
+                        try:
+                            el = driver.find_element(By.CSS_SELECTOR, selector)
+                            if el and len(el.text) > 50:
+                                desc_el = el
+                                print(f"[Indeed] Found description with selector: {selector}")
+                                break
+                        except:
+                            continue
+                    
+                    # Fallback: try to find any large text block
+                    if not desc_el:
+                        try:
+                            # Sometimes the description is in the main content area
+                            main_area = driver.find_element(By.CSS_SELECTOR, "main, [role='main'], #main-content")
+                            if main_area and len(main_area.text) > 100:
+                                desc_el = main_area
+                                print("[Indeed] Using main content area as fallback")
+                        except:
+                            pass
+                    
+                    if desc_el:
+                        data['description'] = desc_el.text
+                    else:
+                        print("[Indeed] Could not find job description element")
+                except Exception as e:
+                    print(f"[Indeed] Error fetching details: {e}")
                 
             # --- Stepstone ---
             elif "stepstone" in p_lower:

@@ -320,6 +320,9 @@ with st.sidebar:
 
     if st.button("🤝 Networking", width="stretch"):
          navigate_to('networking')
+    
+    if st.button("⚙️ Bot Settings", width="stretch"):
+         navigate_to('bot_settings')
          
     st.divider()
     st.markdown(
@@ -567,16 +570,34 @@ if st.session_state['page'] == 'home':
         scrape_limit = c2.number_input("Limit per Role & Platform", value=30, step=10, min_value=1, max_value=5000)
         
         c_easy, c_ph = st.columns([1, 1])
-        easy_apply_only = c_easy.toggle("✨ Easy Apply Only", value=False, help="Restricts to LinkedIn & Xing. Filters for Easy Apply jobs.")
+        easy_apply_only = c_easy.toggle("✨ Easy Apply Only", value=False, help="Full Auto Mode: Browse & Apply until target is reached")
         
         if easy_apply_only:
              platforms = ["LinkedIn", "Xing"]
              # Force selection to these two
              selected_platforms = st.multiselect("Platforms", platforms, default=platforms, disabled=True, help="Restricted to platforms supporting reliable automated Easy Apply.")
-             st.caption("ℹ️ 'Easy Apply' mode is active. Only LinkedIn and Xing are enabled.")
+             
+             st.info("🤖 **Live Apply Mode**: Bot will browse job pages and apply until target is reached, skipping blacklisted/parked/applied jobs!")
+             
+             # Target Apply Count
+             c_target, c_res, c_phone = st.columns(3)
+             target_apply_count = c_target.number_input("🎯 Target Applications", value=5, min_value=1, max_value=50, step=1, help="Bot will keep applying until this many successful applications")
+             
+             # Resume Selection for Auto-Apply
+             resume_options = list(st.session_state.get('resumes', {}).keys())
+             if resume_options:
+                 auto_resume_key = c_res.selectbox("Resume for Auto-Apply", resume_options, key="auto_apply_resume_home")
+                 auto_resume_path = st.session_state['resumes'].get(auto_resume_key, {}).get('file_path', '')
+             else:
+                 c_res.warning("⚠️ No resume uploaded!")
+                 auto_resume_path = ''
+             
+             auto_phone = c_phone.text_input("Phone Number", value="", key="auto_apply_phone_home", placeholder="+49 123 456789")
         else:
              platforms = ["LinkedIn", "Indeed", "Stepstone", "Xing", "ZipRecruiter"]
              selected_platforms = st.multiselect("Platforms", platforms, default=platforms)
+             auto_resume_path = ''
+             auto_phone = ''
         
         st.markdown("###")
 
@@ -585,44 +606,122 @@ if st.session_state['page'] == 'home':
         
         with col_run:
             if st.button("🚀 Launch All Missions", type="primary", width="stretch", disabled=not st.session_state['resumes']):
-                from job_hunter.scout import Scout
-                
-                scout = Scout()
-                platforms_arg = selected_platforms if selected_platforms else ["LinkedIn"] # Default to LinkedIn
-                
-                # BATCH LOOP
                 status_box = st.empty()
-                total = len(st.session_state['resumes'])
                 
-                for idx, (role_name, role_data) in enumerate(st.session_state['resumes'].items()):
-                    # FILES x KEYWORDS x LOCATIONS
+                # === EASY APPLY LIVE MODE (Skip scraping entirely) ===
+                if easy_apply_only and auto_resume_path:
+                    status_box.info(f"🤖 **Live Apply Mode**: Targeting {target_apply_count} successful applications...")
                     
-                    # 1. Parse Keywords
-                    raw_kw = role_data.get("target_keywords", "")
-                    # Fallback to role name if empty, but better to be explicit
-                    keywords = [k.strip() for k in raw_kw.split(';') if k.strip()]
-                    if not keywords: keywords = [role_name] # Emergency fallback
+                    from job_hunter.applier import JobApplier
+                    applier = JobApplier(resume_path=auto_resume_path, phone_number=auto_phone)
                     
-                    # 2. Parse Locations
-                    locations = [l.strip() for l in scrape_location.split(';') if l.strip()]
-                    if not locations: locations = ["Germany"] # Fallback
-
-                    for kw in keywords:
-                        for loc in locations:
-                            status_box.info(f"🚀 [{idx+1}/{total}] Scouting for **{kw}** in **{loc}** ({role_name})...")
+                    total_applied = 0
+                    total_skipped = 0
+                    total_errors = 0
+                    
+                    for role_name, resume_data in st.session_state['resumes'].items():
+                        if total_applied >= target_apply_count:
+                            break
                             
-                            try:
-                                scout.launch_mission(
-                                     keyword=kw, 
-                                     location=loc, 
-                                     limit=scrape_limit, 
-                                     platforms=platforms_arg,
-                                     easy_apply=easy_apply_only
-                                )
-                            except Exception as e: 
-                                st.error(f"Failed for {kw} in {loc}: {e}")
+                        # Use target_keywords (same as standard scrape mode)
+                        raw_kw = resume_data.get("target_keywords", "")
+                        keywords = [k.strip() for k in raw_kw.split(';') if k.strip()]
+                        if not keywords:
+                            # Fallback to suggestions if target_keywords is empty
+                            suggestions = resume_data.get("suggestions", [])
+                            if isinstance(suggestions, list) and suggestions:
+                                keywords = suggestions
+                            else:
+                                st.warning(f"⚠️ No keywords set for '{role_name}'. Please set Target Keywords in Step 1.")
+                                continue
+                        
+                        locations = [l.strip() for l in scrape_location.split(';') if l.strip()]
+                        if not locations:
+                            locations = ["Germany"]
+                        
+                        for kw in keywords:
+                            if total_applied >= target_apply_count:
+                                break
+                            for loc in locations:
+                                if total_applied >= target_apply_count:
+                                    break
+                                    
+                                remaining = target_apply_count - total_applied
+                                
+                                # LinkedIn Live Apply
+                                status_box.info(f"🔍 [LinkedIn] Searching '{kw}' in '{loc}' (need {remaining} more)...")
+                                
+                                try:
+                                    results = applier.live_apply_linkedin(
+                                        keyword=kw,
+                                        location=loc,
+                                        target_count=remaining
+                                    )
+                                    
+                                    total_applied += len(results.get("applied", []))
+                                    total_skipped += len(results.get("skipped", []))
+                                    total_errors += len(results.get("errors", []))
+                                    st.session_state['applied_jobs'] = db.load_applied()
+                                    
+                                except Exception as e:
+                                    st.error(f"LinkedIn error: {e}")
+                                
+                                # Xing Live Apply (if still need more)
+                                if total_applied < target_apply_count:
+                                    remaining = target_apply_count - total_applied
+                                    status_box.info(f"🔍 [Xing] Searching '{kw}' in '{loc}' (need {remaining} more)...")
+                                    
+                                    try:
+                                        results = applier.live_apply_xing(
+                                            keyword=kw,
+                                            location=loc,
+                                            target_count=remaining
+                                        )
+                                        
+                                        total_applied += len(results.get("applied", []))
+                                        total_skipped += len(results.get("skipped", []))
+                                        total_errors += len(results.get("errors", []))
+                                        st.session_state['applied_jobs'] = db.load_applied()
+                                        
+                                    except Exception as e:
+                                        st.error(f"Xing error: {e}")
+                    
+                    applier.close()
+                    status_box.success(f"🎉 Live Apply Complete! Applied: {total_applied} | Skipped: {total_skipped} | Errors: {total_errors}")
                 
-                status_box.success("🎉 All Missions Complete! Taking you to results...")
+                else:
+                    # STANDARD SCRAPE MODE
+                    from job_hunter.scout import Scout
+                    scout = Scout()
+                    platforms_arg = selected_platforms if selected_platforms else ["LinkedIn"]
+                    
+                    total = len(st.session_state['resumes'])
+                    
+                    for idx, (role_name, role_data) in enumerate(st.session_state['resumes'].items()):
+                        raw_kw = role_data.get("target_keywords", "")
+                        keywords = [k.strip() for k in raw_kw.split(';') if k.strip()]
+                        if not keywords: keywords = [role_name]
+                        
+                        locations = [l.strip() for l in scrape_location.split(';') if l.strip()]
+                        if not locations: locations = ["Germany"]
+
+                        for kw in keywords:
+                            for loc in locations:
+                                status_box.info(f"🚀 [{idx+1}/{total}] Scouting for **{kw}** in **{loc}** ({role_name})...")
+                                
+                                try:
+                                    scout.launch_mission(
+                                         keyword=kw, 
+                                         location=loc, 
+                                         limit=scrape_limit, 
+                                         platforms=platforms_arg,
+                                         easy_apply=False
+                                    )
+                                except Exception as e: 
+                                    st.error(f"Failed for {kw} in {loc}: {e}")
+                    
+                    status_box.success("🎉 All Missions Complete! Taking you to results...")
+                
                 st.cache_data.clear() # Clear cache to load new data
                 st.session_state['page'] = 'explorer'
                 time.sleep(1) # Visual pause
@@ -674,6 +773,7 @@ elif st.session_state['page'] == 'explorer':
                  s_list = [s.strip() for s in new_safe.split(';') if s.strip()]
                  db.save_blacklist(c_list, t_list, s_list)
                  st.toast("Blacklist Updated! 🛡️")
+
 
         # Pre-calculate filtered for logic (no filters really, just load)
         filtered = df.copy()
@@ -849,6 +949,25 @@ elif st.session_state['page'] == 'explorer':
             display_df.insert(3, "Park", False)
             display_df["Park"] = display_df["Park"].astype(bool)
             
+            # FILTER SECTION
+            with st.expander("🔍 Filter Jobs", expanded=False):
+                c_col, c_search, c_clear = st.columns([2, 3, 1])
+                
+                # Get filterable columns
+                filterable_cols = [c for c in display_df.columns if c not in ["Select", "Applied", "Delete", "Park"]]
+                
+                filter_col = c_col.selectbox("Column", filterable_cols, key="filter_column")
+                filter_term = c_search.text_input("Contains", placeholder="Type to filter...", key="filter_term")
+                
+                if c_clear.button("🔄 Clear", use_container_width=True):
+                    st.session_state["filter_term"] = ""
+                    st.rerun()
+                
+                # Apply filter
+                if filter_term:
+                    display_df = display_df[display_df[filter_col].astype(str).str.contains(filter_term, case=False, na=False)]
+                    st.caption(f"Showing {len(display_df)} jobs matching '{filter_term}' in '{filter_col}'")
+            
             # Toggle Filter
             c_tog, _ = st.columns([1, 4])
             hide_applied = c_tog.toggle("Hide Applied Jobs", value=False)
@@ -888,13 +1007,116 @@ elif st.session_state['page'] == 'explorer':
 
             # a3. End Day / Archive Applied
             st.markdown("###")
-            if st.button("🏁 End Day / Archive Applied", help="Removes all Applied jobs from the active 'Scouted' list.", width="stretch"):
-                 archived_count = db.archive_applied_jobs()
-                 if archived_count > 0:
-                     st.toast(f"Archived {archived_count} jobs from current view!", icon="🧹")
-                     st.cache_data.clear()
-                     st.rerun()
-                     st.toast("No new applied jobs to archive.", icon="ℹ️")
+            
+            c_end, c_easy = st.columns(2)
+            
+            with c_end:
+                if st.button("🏁 End Day / Archive Applied", help="Removes all Applied jobs from the active 'Scouted' list.", use_container_width=True):
+                     archived_count = db.archive_applied_jobs()
+                     if archived_count > 0:
+                         st.toast(f"Archived {archived_count} jobs from current view!", icon="🧹")
+                         st.cache_data.clear()
+                         st.rerun()
+                     else:
+                         st.toast("No new applied jobs to archive.", icon="ℹ️")
+            
+            with c_easy:
+                # Count eligible jobs
+                apply_platforms = ["LinkedIn", "Xing"]
+                eligible_for_easy = display_df[display_df["Platform"].isin(apply_platforms)]
+                eligible_count = len(eligible_for_easy)
+                
+                if st.button(f"🤖 Easy Apply All ({eligible_count} jobs)", type="primary", use_container_width=True, disabled=(eligible_count == 0)):
+                    st.session_state['show_easy_apply_confirm'] = True
+            
+            # CONFIRMATION DIALOG
+            if st.session_state.get('show_easy_apply_confirm', False):
+                st.warning("⚠️ **Confirmation Required**")
+                st.markdown(f"""
+                **Are you sure you want to start Easy Apply?**
+                
+                The bot will:
+                1. Open **{eligible_count}** LinkedIn/Xing jobs one by one
+                2. Check if each job has "Easy Apply" option
+                3. If yes → Apply automatically using your resume
+                4. If no → Skip to next job
+                
+                ⏱️ This may take **{eligible_count * 10 // 60} - {eligible_count * 15 // 60} minutes**
+                """)
+                
+                # Resume Selection
+                resume_options = list(st.session_state.get('resumes', {}).keys())
+                if resume_options:
+                    easy_resume_key = st.selectbox("Select Resume", resume_options, key="easy_apply_confirm_resume")
+                    easy_resume_path = st.session_state['resumes'].get(easy_resume_key, {}).get('file_path', '')
+                else:
+                    st.error("❌ No resume uploaded! Go to Home page to add one.")
+                    easy_resume_path = ''
+                
+                easy_phone = st.text_input("Phone Number (optional)", key="easy_apply_confirm_phone", placeholder="+49 123 456789")
+                
+                c_yes, c_no = st.columns(2)
+                
+                if c_yes.button("✅ Confirm Auto-Apply", type="primary", use_container_width=True, disabled=not easy_resume_path):
+                    st.session_state['show_easy_apply_confirm'] = False
+                    st.session_state['easy_apply_running'] = True
+                    
+                    # START THE MAZDOORI!
+                    from job_hunter.applier import JobApplier
+                    
+                    applier = JobApplier(resume_path=easy_resume_path, phone_number=easy_phone)
+                    
+                    prog = st.progress(0)
+                    status = st.empty()
+                    results_log = []
+                    
+                    jobs_list = eligible_for_easy.to_dict('records')
+                    total = len(jobs_list)
+                    
+                    applied_count = 0
+                    skipped_count = 0
+                    
+                    for i, job in enumerate(jobs_list):
+                        job_url = job.get("Web Address") or job.get("link")
+                        platform = job.get("Platform") or job.get("platform")
+                        title = job.get("Job Title") or job.get("title")
+                        company = job.get("Company") or job.get("company")
+                        
+                        status.text(f"🔍 Checking {i+1}/{total}: {title} @ {company}")
+                        
+                        success, message, is_easy = applier.apply(job_url, platform, job_title=title, company=company)
+                        
+                        if not is_easy:
+                            skipped_count += 1
+                            results_log.append({"Job": title, "Company": company, "Status": "⏭️ Skipped", "Message": "Not Easy Apply"})
+                        elif success:
+                            applied_count += 1
+                            results_log.append({"Job": title, "Company": company, "Status": "✅ Applied", "Message": message})
+                            jid = f"{title}-{company}"
+                            job_data = {"Job Title": title, "Company": company, "Web Address": job_url, "Platform": platform}
+                            st.session_state['applied_jobs'] = db.save_applied(jid, job_data, {"auto_applied": True})
+                        else:
+                            results_log.append({"Job": title, "Company": company, "Status": "❌ Failed", "Message": message})
+                        
+                        prog.progress((i + 1) / total)
+                    
+                    applier.close()
+                    st.session_state['easy_apply_running'] = False
+                    
+                    # RESULTS
+                    st.success(f"🎉 **Mazdoori Complete!** Applied: {applied_count} | Skipped: {skipped_count} | Failed: {total - applied_count - skipped_count}")
+                    
+                    with st.expander("📝 Full Log", expanded=True):
+                        for r in results_log:
+                            st.write(f"{r['Status']} **{r['Job']}** @ {r['Company']}: {r['Message']}")
+                    
+                    st.cache_data.clear()
+                    st.rerun()
+                
+                if c_no.button("❌ Cancel", use_container_width=True):
+                    st.session_state['show_easy_apply_confirm'] = False
+                    st.rerun()
+
 
             # a4. BULK ACTIONS (LANGUAGE)
             with st.expander("⚡ Bulk Actions (Language)", expanded=False):
@@ -939,6 +1161,8 @@ elif st.session_state['page'] == 'explorer':
                          st.rerun()
                 else:
                     st.info("No language data available to filter.")
+            
+
             # Change Detection Logic (Inside Expander or just before Analysis)
             # We keep it here to run before Analysis panel rendering updates
             changes_detected = False
@@ -1640,3 +1864,140 @@ elif st.session_state['page'] == 'applied':
                             db.save_applied(job_id, curr_app['job_details'], res, curr_app['status'])
                             
                         st.rerun()
+
+# ==========================================
+# VIEW 5: BOT SETTINGS
+# ==========================================
+if st.session_state['page'] == 'bot_settings':
+    st.title("⚙️ Bot Settings")
+    st.caption("Configure auto-answers for LinkedIn Easy Apply questions. Unknown questions are logged here.")
+    
+    bot_config = db.load_bot_config()
+    answers = bot_config.get("answers", {})
+    unknown = bot_config.get("unknown_questions", [])
+    
+    # Stats
+    c1, c2 = st.columns(2)
+    c1.metric("📝 Configured Answers", len(answers))
+    c2.metric("❓ Unknown Questions", len(unknown))
+    
+    st.divider()
+    
+    # Tab layout
+    tab_answers, tab_unknown, tab_add = st.tabs(["📝 My Answers", "❓ Unknown Questions", "➕ Add New"])
+    
+    with tab_answers:
+        st.subheader("Current Question-Answer Mappings")
+        
+        if answers:
+            # Search within answers
+            search_ans = st.text_input("🔍 Search answers...", key="search_answers", placeholder="Type to filter...")
+            
+            filtered_answers = {k: v for k, v in answers.items() if search_ans.lower() in k.lower() or search_ans.lower() in v.lower()} if search_ans else answers
+            
+            st.caption(f"Showing {len(filtered_answers)} of {len(answers)} answers")
+            
+            for i, (question, answer) in enumerate(list(filtered_answers.items())):
+                with st.container():
+                    c_q, c_a, c_del = st.columns([3, 2, 1])
+                    c_q.markdown(f"**{question}**")
+                    new_ans = c_a.text_input("Answer", value=answer, key=f"ans_pg_{i}", label_visibility="collapsed")
+                    
+                    if new_ans != answer:
+                        db.add_answer(question, new_ans)
+                        st.toast(f"Updated: '{question}' → '{new_ans}'")
+                        st.rerun()
+                    
+                    if c_del.button("🗑️", key=f"del_pg_{i}", help="Delete this answer"):
+                        db.delete_answer(question)
+                        st.toast(f"Deleted: '{question}'")
+                        st.rerun()
+        else:
+            st.info("No answers configured yet. Add some in the 'Add New' tab!")
+    
+    with tab_unknown:
+        st.subheader("Unknown Questions Encountered")
+        
+        if unknown:
+            st.warning(f"**{len(unknown)} question(s)** the bot couldn't answer. Add your answers below!")
+            
+            for j, uq in enumerate(unknown):
+                q_text = uq.get("question", "")
+                job_info = f"{uq.get('job_title', '')} @ {uq.get('company', '')}" if uq.get('job_title') else ""
+                timestamp = uq.get("timestamp", "")
+                
+                with st.container():
+                    st.markdown(f"### {j+1}. {q_text}")
+                    if job_info:
+                        st.caption(f"📍 From: {job_info}")
+                    if timestamp:
+                        st.caption(f"🕐 {timestamp[:10]}")
+                    
+                    c_input, c_save = st.columns([4, 1])
+                    new_answer = c_input.text_input("Your Answer", key=f"uq_pg_{j}", placeholder="Enter your answer for this question...")
+                    
+                    if c_save.button("💾 Save", key=f"uq_save_pg_{j}", type="primary"):
+                        if new_answer:
+                            db.add_answer(q_text, new_answer)
+                            st.toast(f"✅ Added answer for '{q_text}'")
+                            st.rerun()
+                        else:
+                            st.error("Please enter an answer")
+                    
+                    st.divider()
+            
+            if st.button("🧹 Clear All Unknown Questions", type="secondary"):
+                db.clear_unknown_questions()
+                st.toast("Cleared all unknown questions")
+                st.rerun()
+        else:
+            st.success("✅ No unknown questions! The bot has answers for all encountered questions.")
+    
+    with tab_add:
+        st.subheader("Add New Question-Answer Mapping")
+        
+        c_q, c_a = st.columns([3, 2])
+        new_q = c_q.text_input("Question Pattern", placeholder="e.g. 'years of experience'", key="add_q_pg")
+        new_a = c_a.text_input("Answer", placeholder="e.g. '5'", key="add_a_pg")
+        
+        if st.button("➕ Add Answer", type="primary"):
+            if new_q and new_a:
+                db.add_answer(new_q, new_a)
+                st.toast(f"✅ Added: '{new_q}' → '{new_a}'")
+                st.rerun()
+            else:
+                st.error("Please enter both question pattern and answer")
+        
+        st.divider()
+        
+        st.markdown("### 📚 Common LinkedIn Questions")
+        st.caption("These are typical questions asked during Easy Apply. Click to add them.")
+        
+        common_qa = [
+            ("years of experience", "5"),
+            ("how many years", "5"),
+            ("authorized to work", "Yes"),
+            ("legally authorized", "Yes"),
+            ("require sponsorship", "No"),
+            ("visa sponsorship", "No"),
+            ("willing to relocate", "Yes"),
+            ("remote work", "Yes"),
+            ("work remotely", "Yes"),
+            ("notice period", "2 weeks"),
+            ("when can you start", "Immediately"),
+            ("start date", "Immediately"),
+            ("highest education", "Bachelor's degree"),
+            ("proficiency", "Professional"),
+            ("english", "Fluent"),
+            ("german", "Conversational"),
+        ]
+        
+        for q, a in common_qa:
+            if q.lower() not in [k.lower() for k in answers.keys()]:
+                c_ex_q, c_ex_a, c_ex_add = st.columns([3, 2, 1])
+                c_ex_q.text(q)
+                c_ex_a.text(a)
+                if c_ex_add.button("➕", key=f"add_ex_{q}"):
+                    db.add_answer(q, a)
+                    st.toast(f"Added: '{q}' → '{a}'")
+                    st.rerun()
