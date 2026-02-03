@@ -379,6 +379,39 @@ class JobApplier:
                         input_el.clear()
                         input_el.send_keys(answer)
                         print(f"[LinkedIn] Answered '{label_text}' → '{answer}'")
+
+                        # Handle LinkedIn's typeahead/combobox (e.g. City/Location)
+                        # These fields require selecting an option from the dropdown even if text is correct
+                        try:
+                            # Short sleep to let dropdown appear
+                            self.random_sleep(0.5, 1.0)
+
+                            # Check if input is likely a combobox
+                            role = input_el.get_attribute("role")
+                            autocomplete = input_el.get_attribute("aria-autocomplete")
+                            is_typeahead = role == "combobox" or autocomplete == "list" or \
+                                           "city" in label_text.lower() or "location" in label_text.lower()
+
+                            if is_typeahead:
+                                # Try multiple selectors for the first option in the dropdown
+                                suggestion_selectors = [
+                                    ".artdeco-typeahead__result",
+                                    ".artdeco-typeahead__results-list li",
+                                    "[role='option']",
+                                    ".basic-typeahead__result"
+                                ]
+
+                                for sug_sel in suggestion_selectors:
+                                    try:
+                                        option = self.find_element_safe(sug_sel, timeout=1)
+                                        if option and option.is_displayed():
+                                            option.click()
+                                            print(f"[LinkedIn] ✅ Selected first dropdown option for '{label_text}'")
+                                            break
+                                    except:
+                                        continue
+                        except:
+                            pass
                     else:
                         # Handle common questions with safe defaults
                         label_lower = label_text.lower()
@@ -401,6 +434,17 @@ class JobApplier:
                             input_el.clear()
                             input_el.send_keys(default_answer)
                             print(f"[LinkedIn] Filled '{label_text}' → '{default_answer}' (default)")
+
+                            # Also handle typeahead for default answers
+                            try:
+                                self.random_sleep(0.5, 1.0)
+                                if "city" in label_text.lower() or "location" in label_text.lower():
+                                    option = self.find_element_safe(".artdeco-typeahead__result, [role='option']", timeout=1)
+                                    if option:
+                                        option.click()
+                                        print(f"[LinkedIn] ✅ Selected first dropdown option for default '{label_text}'")
+                            except:
+                                pass
                         else:
                             # Log as unknown question
                             print(f"[LinkedIn] ❓ Unknown question: '{label_text}'")
