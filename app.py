@@ -620,19 +620,16 @@ if st.session_state['page'] == 'home':
                 
                 # === EASY APPLY LIVE MODE (Skip scraping entirely) ===
                 if easy_apply_only and auto_resume_path:
-                    status_box.info(f"🤖 **Live Apply Mode**: Targeting {target_apply_count} successful applications...")
+                    status_box.info(f"🤖 **Live Apply Mode**: Running keywords with limit of {scrape_limit} applications each...")
                     
                     from job_hunter.applier import JobApplier
                     applier = JobApplier(resume_path=auto_resume_path)
                     
-                    total_applied = 0
+                    session_total_applied = 0
                     total_skipped = 0
                     total_errors = 0
                     
                     for role_name, resume_data in st.session_state['resumes'].items():
-                        if total_applied >= target_apply_count:
-                            break
-                            
                         # Use target_keywords (same as standard scrape mode)
                         raw_kw = resume_data.get("target_keywords", "")
                         keywords = [k.strip() for k in raw_kw.split(';') if k.strip()]
@@ -653,26 +650,30 @@ if st.session_state['page'] == 'home':
                             locations = ["Germany"]
                         
                         for kw in keywords:
-                            if total_applied >= target_apply_count:
-                                break
+                            # Tracking per keyword across all locations
+                            kw_applied = 0
+
                             for loc in locations:
-                                if total_applied >= target_apply_count:
+                                # Break loc loop if keyword limit reached
+                                if kw_applied >= scrape_limit:
                                     break
                                     
-                                remaining = target_apply_count - total_applied
+                                remaining_for_kw = scrape_limit - kw_applied
                                 
                                 # LinkedIn Live Apply
-                                status_box.info(f"🔍 [LinkedIn] Searching '{kw}' in '{loc}' (need {remaining} more)...")
+                                status_box.info(f"🔍 [LinkedIn] '{kw}' in '{loc}' (Need {remaining_for_kw} more for this title)...")
                                 
                                 try:
                                     results = applier.live_apply_linkedin(
                                         keyword=kw,
                                         location=loc,
-                                        target_count=remaining,
+                                        target_count=remaining_for_kw,
                                         target_role=kw
                                     )
                                     
-                                    total_applied += len(results.get("applied", []))
+                                    applied_now = len(results.get("applied", []))
+                                    kw_applied += applied_now
+                                    session_total_applied += applied_now
                                     total_skipped += len(results.get("skipped", []))
                                     total_errors += len(results.get("errors", []))
                                     st.session_state['applied_jobs'] = db.load_applied()
@@ -680,20 +681,22 @@ if st.session_state['page'] == 'home':
                                 except Exception as e:
                                     st.error(f"LinkedIn error: {e}")
                                 
-                                # Xing Live Apply (if still need more)
-                                if total_applied < target_apply_count:
-                                    remaining = target_apply_count - total_applied
-                                    status_box.info(f"🔍 [Xing] Searching '{kw}' in '{loc}' (need {remaining} more)...")
+                                # Xing Live Apply (if still need more for THIS keyword)
+                                if kw_applied < scrape_limit:
+                                    remaining_for_kw = scrape_limit - kw_applied
+                                    status_box.info(f"🔍 [Xing] '{kw}' in '{loc}' (Need {remaining_for_kw} more for this title)...")
                                     
                                     try:
                                         results = applier.live_apply_xing(
                                             keyword=kw,
                                             location=loc,
-                                            target_count=remaining,
+                                            target_count=remaining_for_kw,
                                             target_role=kw
                                         )
                                         
-                                        total_applied += len(results.get("applied", []))
+                                        applied_now = len(results.get("applied", []))
+                                        kw_applied += applied_now
+                                        session_total_applied += applied_now
                                         total_skipped += len(results.get("skipped", []))
                                         total_errors += len(results.get("errors", []))
                                         st.session_state['applied_jobs'] = db.load_applied()
@@ -702,7 +705,7 @@ if st.session_state['page'] == 'home':
                                         st.error(f"Xing error: {e}")
                     
                     applier.close()
-                    status_box.success(f"🎉 Live Apply Complete! Applied: {total_applied} | Skipped: {total_skipped} | Errors: {total_errors}")
+                    status_box.success(f"🎉 Live Apply Complete! Total Applied: {session_total_applied} | Skipped: {total_skipped} | Errors: {total_errors}")
                 
                 else:
                     # STANDARD SCRAPE MODE

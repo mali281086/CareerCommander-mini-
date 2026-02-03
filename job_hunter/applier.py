@@ -403,11 +403,18 @@ class JobApplier:
 
                                 for sug_sel in suggestion_selectors:
                                     try:
-                                        option = self.find_element_safe(sug_sel, timeout=1)
-                                        if option and option.is_displayed():
-                                            option.click()
-                                            print(f"[LinkedIn] ✅ Selected first dropdown option for '{label_text}'")
-                                            break
+                                        # Use driver.find_elements to avoid waiting too long if not present
+                                        options = self.driver.find_elements(By.CSS_SELECTOR, sug_sel)
+                                        found = False
+                                        for opt in options:
+                                            if opt.is_displayed():
+                                                # Try clicking directly, then with JS
+                                                try: opt.click()
+                                                except: self.driver.execute_script("arguments[0].click();", opt)
+                                                print(f"[LinkedIn] ✅ Selected dropdown option for '{label_text}'")
+                                                found = True
+                                                break
+                                        if found: break
                                     except:
                                         continue
                         except:
@@ -439,10 +446,13 @@ class JobApplier:
                             try:
                                 self.random_sleep(0.5, 1.0)
                                 if "city" in label_text.lower() or "location" in label_text.lower():
-                                    option = self.find_element_safe(".artdeco-typeahead__result, [role='option']", timeout=1)
-                                    if option:
-                                        option.click()
-                                        print(f"[LinkedIn] ✅ Selected first dropdown option for default '{label_text}'")
+                                    options = self.driver.find_elements(By.CSS_SELECTOR, ".artdeco-typeahead__result, [role='option'], .artdeco-typeahead__results-list li")
+                                    for opt in options:
+                                        if opt.is_displayed():
+                                            try: opt.click()
+                                            except: self.driver.execute_script("arguments[0].click();", opt)
+                                            print(f"[LinkedIn] ✅ Selected dropdown option for default '{label_text}'")
+                                            break
                             except:
                                 pass
                         else:
@@ -522,7 +532,7 @@ class JobApplier:
                     
                     # Smart selection: prefer higher values, avoid "Gar nicht", "Keine", "0"
                     negative_terms = ['gar nicht', 'keine', 'kein', 'never', 'none', 'not at all', '0 ']
-                    prefer_terms = ['5+', '10+', '3+', '4+', 'more than', 'über', 'ja', 'yes', 'expert', 'erfahren']
+                    prefer_terms = ['5+', '10+', '3+', '4+', 'more than', 'über', 'ja', 'yes', 'expert', 'erfahren', 'native', 'bilingual', 'immer', 'always']
                     
                     selected = False
                     # First try to find a preferred option
@@ -554,60 +564,94 @@ class JobApplier:
         except:
             pass
         
-        # 5. Handle RADIO BUTTONS with smart Yes/No matching
+        # 5. Handle RADIO BUTTONS and BUTTON GROUPS with smart Yes/No matching
         try:
-            radio_groups = self.driver.find_elements(By.CSS_SELECTOR, "fieldset[data-test-form-builder-radio-button-form-component], fieldset")
+            # Look for fieldsets or groups with radio role
+            radio_groups = self.driver.find_elements(By.CSS_SELECTOR, "fieldset, [role='radiogroup'], .fb-dash-form-element")
             for group in radio_groups:
                 try:
                     # Get the question/legend
-                    legend = group.find_element(By.CSS_SELECTOR, "legend, span.t-bold")
+                    legend = None
+                    try:
+                        legend = group.find_element(By.CSS_SELECTOR, "legend, span.t-bold, .fb-dash-form-element__label")
+                    except:
+                        pass
+                    
                     question_text = legend.text.strip() if legend else ""
-                    
+                    if not question_text:
+                        continue
+
                     # Get configured answer
-                    answer = self.db.get_answer_for_question(question_text) if question_text else None
+                    answer = self.db.get_answer_for_question(question_text)
                     
+                    # 5a. Try actual radio inputs
                     radios = group.find_elements(By.CSS_SELECTOR, "input[type='radio']")
-                    if not radios:
-                        continue
-                    
-                    # Check if any radio is already selected
-                    any_selected = any(r.is_selected() for r in radios)
-                    if any_selected:
-                        continue
-                    
-                    if answer:
-                        # Try to find matching option
-                        for radio in radios:
-                            try:
-                                label = radio.find_element(By.XPATH, "./following-sibling::label | ../label | ../../label")
-                                if answer.lower() in label.text.lower():
-                                    self.driver.execute_script("arguments[0].click();", radio)
-                                    print(f"[LinkedIn] Selected '{label.text}' for '{question_text}'")
+                    if radios:
+                        # Check if any radio is already selected
+                        if any(r.is_selected() for r in radios):
+                            continue
+
+                        options_found = False
+                        if answer:
+                            for radio in radios:
+                                try:
+                                    label_el = radio.find_element(By.XPATH, "./following-sibling::label | ../label")
+                                    if answer.lower() in label_el.text.lower():
+                                        self.driver.execute_script("arguments[0].click();", radio)
+                                        print(f"[LinkedIn] Selected '{label_el.text}' for '{question_text}'")
+                                        options_found = True
+                                        break
+                                except: continue
+
+                        if not options_found:
+                            # Smart selection: prefer "Ja/Yes" over "Nein/No"
+                            yes_labels = ['ja', 'yes', 'agree', 'willing', 'immer']
+                            for radio in radios:
+                                try:
+                                    label_el = radio.find_element(By.XPATH, "./following-sibling::label | ../label")
+                                    if any(y in label_el.text.lower() for y in yes_labels):
+                                        self.driver.execute_script("arguments[0].click();", radio)
+                                        print(f"[LinkedIn] Selected 'Yes' option for '{question_text}'")
+                                        options_found = True
+                                        break
+                                except: continue
+
+                            if not options_found:
+                                # Fallback to first option
+                                self.driver.execute_script("arguments[0].click();", radios[0])
+                                print(f"[LinkedIn] Auto-selected first option for '{question_text}'")
+                                self.db.log_unknown_question(question_text, self.current_job_title, self.current_company)
+                        continue # Done with this group
+
+                    # 5b. Try Button Groups (often used for Yes/No)
+                    buttons = group.find_elements(By.CSS_SELECTOR, "button")
+                    if buttons and len(buttons) >= 2:
+                        # Check if any is already 'selected' (often indicated by class or aria-pressed)
+                        if any("active" in b.get_attribute("class").lower() or b.get_attribute("aria-pressed") == "true" for b in buttons):
+                            continue
+
+                        btn_clicked = False
+                        if answer:
+                            for btn in buttons:
+                                if answer.lower() in btn.text.lower():
+                                    btn.click()
+                                    print(f"[LinkedIn] Clicked button '{btn.text}' for '{question_text}'")
+                                    btn_clicked = True
                                     break
-                            except:
-                                continue
-                    else:
-                        # Smart selection: prefer "Ja/Yes" over "Nein/No"
-                        yes_labels = ['ja', 'yes', 'agree', 'willing']
-                        selected = False
                         
-                        for radio in radios:
-                            try:
-                                label = radio.find_element(By.XPATH, "./following-sibling::label | ../label | ../../label")
-                                if any(y in label.text.lower() for y in yes_labels):
-                                    self.driver.execute_script("arguments[0].click();", radio)
-                                    print(f"[LinkedIn] Selected 'Yes' option for '{question_text}'")
-                                    selected = True
+                        if not btn_clicked:
+                            yes_labels = ['ja', 'yes', 'agree', 'willing', 'immer']
+                            for btn in buttons:
+                                if any(y in btn.text.lower() for y in yes_labels):
+                                    btn.click()
+                                    print(f"[LinkedIn] Clicked 'Yes' button for '{question_text}'")
+                                    btn_clicked = True
                                     break
-                            except:
-                                continue
-                        
-                        if not selected:
-                            self.driver.execute_script("arguments[0].click();", radios[0])
-                            print(f"[LinkedIn] Auto-selected first option for '{question_text}'")
-                        
-                        if question_text:
-                            self.db.log_unknown_question(question_text, self.current_job_title, self.current_company)
+
+                            if not btn_clicked:
+                                buttons[0].click()
+                                print(f"[LinkedIn] Clicked first button for '{question_text}'")
+                                self.db.log_unknown_question(question_text, self.current_job_title, self.current_company)
                 except:
                     pass
         except:
@@ -800,6 +844,10 @@ class JobApplier:
         processed_jobs = set()  # Track processed jobs by title+company to avoid duplicates
         
         while applied_count < target_count and page < max_pages:
+            if self.applied_count >= self.max_applications:
+                log(f"🛑 Session limit ({self.max_applications}) reached!")
+                break
+
             page += 1
             log(f"📄 Page {page} - Applied: {applied_count}/{target_count}")
             
@@ -1306,10 +1354,15 @@ class JobApplier:
         
         page = 0
         max_pages = 20
+        applied_in_call = 0
         
-        while self.applied_count < target_count and page < max_pages:
+        while applied_in_call < target_count and page < max_pages:
+            if self.applied_count >= self.max_applications:
+                log(f"🛑 Session limit ({self.max_applications}) reached!")
+                break
+
             page += 1
-            log(f"📄 Scanning page {page}...")
+            log(f"📄 Scanning page {page} - Applied {applied_in_call}/{target_count}...")
             
             # Find job cards
             try:
@@ -1325,7 +1378,7 @@ class JobApplier:
             search_handle = self.driver.current_window_handle
 
             for idx, card in enumerate(job_cards):
-                if self.applied_count >= target_count:
+                if applied_in_call >= target_count:
                     break
                 
                 results["checked"] += 1
@@ -1408,6 +1461,7 @@ class JobApplier:
                     
                     if success:
                         log(f"   ✅ Applied successfully!")
+                        applied_in_call += 1
                         results["applied"].append({"title": title, "company": company, "url": current_url})
                         applied_links.add(current_url)
                         
@@ -1439,7 +1493,7 @@ class JobApplier:
                     continue
             
             # Next page
-            if self.applied_count < target_count:
+            if applied_in_call < target_count:
                 try:
                     next_btn = self.driver.find_element(By.CSS_SELECTOR, "button[aria-label='Next'], a[rel='next'], [data-testid='pagination-next']")
                     next_btn.click()
