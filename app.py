@@ -547,11 +547,26 @@ if st.session_state['page'] == 'home':
                                  st.session_state['resumes'][new_role_name] = st.session_state['resumes'].pop(role_key)
                                  save_resume_config()
                                  st.rerun() # Refresh immediately
-                             
-                        if st.button("🗑️ Remove", key=f"del_{data['filename']}"):
-                            del st.session_state['resumes'][new_role_name]
-                            save_resume_config()
-                            st.rerun()
+                        
+                        # Action buttons row
+                        btn_col1, btn_col2 = st.columns(2)
+                        with btn_col1:
+                            if st.button("📜 Load Previous", key=f"fetch_{data['filename']}", help="Load previously used job titles"):
+                                prev_titles = db.load_resume_title_history(data['filename'])
+                                if prev_titles:
+                                    # Join titles with semicolons
+                                    st.session_state['resumes'][role_key]['target_keywords'] = "; ".join(prev_titles)
+                                    save_resume_config()
+                                    st.toast(f"Loaded {len(prev_titles)} previous titles!")
+                                    st.rerun()
+                                else:
+                                    st.toast("No previous titles found.")
+                        
+                        with btn_col2:
+                            if st.button("🗑️ Remove", key=f"del_{data['filename']}"):
+                                del st.session_state['resumes'][new_role_name]
+                                save_resume_config()
+                                st.rerun()
 
     # 2. MISSION CONFIGURATION (BATCH)
     st.divider()
@@ -569,35 +584,30 @@ if st.session_state['page'] == 'home':
         
         scrape_limit = c2.number_input("Limit per Role & Platform", value=30, step=10, min_value=1, max_value=5000)
         
-        c_easy, c_ph = st.columns([1, 1])
-        easy_apply_only = c_easy.toggle("✨ Easy Apply Only", value=False, help="Full Auto Mode: Browse & Apply until target is reached")
+        c_easy, _ = st.columns([1, 1])
+        easy_apply_only = c_easy.toggle("✨ Easy Apply Only", value=False, help="Live Apply Mode: Browse & Apply until limit reached")
         
         if easy_apply_only:
              platforms = ["LinkedIn", "Xing"]
-             # Force selection to these two
-             selected_platforms = st.multiselect("Platforms", platforms, default=platforms, disabled=True, help="Restricted to platforms supporting reliable automated Easy Apply.")
+             selected_platforms = st.multiselect("Platforms", platforms, default=platforms, disabled=True, help="Restricted to platforms supporting automated Easy Apply.")
              
-             st.info("🤖 **Live Apply Mode**: Bot will browse job pages and apply until target is reached, skipping blacklisted/parked/applied jobs!")
+             st.info("🤖 **Live Apply Mode**: Bot will browse job pages and apply until limit is reached, skipping blacklisted/parked/applied jobs!")
              
-             # Target Apply Count
-             c_target, c_res, c_phone = st.columns(3)
-             target_apply_count = c_target.number_input("🎯 Target Applications", value=5, min_value=1, max_value=50, step=1, help="Bot will keep applying until this many successful applications")
+             # Use scrape_limit as target count
+             target_apply_count = scrape_limit
              
-             # Resume Selection for Auto-Apply
+             # Use first available resume automatically
              resume_options = list(st.session_state.get('resumes', {}).keys())
              if resume_options:
-                 auto_resume_key = c_res.selectbox("Resume for Auto-Apply", resume_options, key="auto_apply_resume_home")
+                 auto_resume_key = resume_options[0]
                  auto_resume_path = st.session_state['resumes'].get(auto_resume_key, {}).get('file_path', '')
              else:
-                 c_res.warning("⚠️ No resume uploaded!")
+                 st.warning("⚠️ No resume uploaded in Step 1!")
                  auto_resume_path = ''
-             
-             auto_phone = c_phone.text_input("Phone Number", value="", key="auto_apply_phone_home", placeholder="+49 123 456789")
         else:
              platforms = ["LinkedIn", "Indeed", "Stepstone", "Xing", "ZipRecruiter"]
              selected_platforms = st.multiselect("Platforms", platforms, default=platforms)
              auto_resume_path = ''
-             auto_phone = ''
         
         st.markdown("###")
 
@@ -613,7 +623,7 @@ if st.session_state['page'] == 'home':
                     status_box.info(f"🤖 **Live Apply Mode**: Targeting {target_apply_count} successful applications...")
                     
                     from job_hunter.applier import JobApplier
-                    applier = JobApplier(resume_path=auto_resume_path, phone_number=auto_phone)
+                    applier = JobApplier(resume_path=auto_resume_path)
                     
                     total_applied = 0
                     total_skipped = 0
@@ -634,6 +644,9 @@ if st.session_state['page'] == 'home':
                             else:
                                 st.warning(f"⚠️ No keywords set for '{role_name}'. Please set Target Keywords in Step 1.")
                                 continue
+                        
+                        # Save titles to history for this resume
+                        db.save_resume_title_history(resume_data.get("filename", role_name), keywords)
                         
                         locations = [l.strip() for l in scrape_location.split(';') if l.strip()]
                         if not locations:
@@ -1967,37 +1980,3 @@ if st.session_state['page'] == 'bot_settings':
                 st.rerun()
             else:
                 st.error("Please enter both question pattern and answer")
-        
-        st.divider()
-        
-        st.markdown("### 📚 Common LinkedIn Questions")
-        st.caption("These are typical questions asked during Easy Apply. Click to add them.")
-        
-        common_qa = [
-            ("years of experience", "5"),
-            ("how many years", "5"),
-            ("authorized to work", "Yes"),
-            ("legally authorized", "Yes"),
-            ("require sponsorship", "No"),
-            ("visa sponsorship", "No"),
-            ("willing to relocate", "Yes"),
-            ("remote work", "Yes"),
-            ("work remotely", "Yes"),
-            ("notice period", "2 weeks"),
-            ("when can you start", "Immediately"),
-            ("start date", "Immediately"),
-            ("highest education", "Bachelor's degree"),
-            ("proficiency", "Professional"),
-            ("english", "Fluent"),
-            ("german", "Conversational"),
-        ]
-        
-        for q, a in common_qa:
-            if q.lower() not in [k.lower() for k in answers.keys()]:
-                c_ex_q, c_ex_a, c_ex_add = st.columns([3, 2, 1])
-                c_ex_q.text(q)
-                c_ex_a.text(a)
-                if c_ex_add.button("➕", key=f"add_ex_{q}"):
-                    db.add_answer(q, a)
-                    st.toast(f"Added: '{q}' → '{a}'")
-                    st.rerun()

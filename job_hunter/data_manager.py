@@ -518,5 +518,65 @@ class DataManager:
                 return answer
         
         return None  # No match found
-
+    
+    # ==========================================
+    # RESUME TITLE HISTORY
+    # ==========================================
+    def _get_resume_history_file(self):
+        """Get path to resume title history file."""
+        return os.path.join(DATA_DIR, "resume_title_history.json")
+    
+    def load_resume_title_history(self, resume_filename):
+        """
+        Load previously used job titles for a specific resume.
+        
+        Args:
+            resume_filename: The resume filename (e.g., "Sheikh Ali Mateen - Resume.pdf")
+        
+        Returns:
+            List of previously used job titles, most recent first
+        """
+        filepath = self._get_resume_history_file()
+        if os.path.exists(filepath):
+            with open(filepath, "r", encoding="utf-8") as f:
+                history = json.load(f)
+                return history.get(resume_filename, [])
+        return []
+    
+    def save_resume_title_history(self, resume_filename, titles):
+        """
+        Save job titles used for a specific resume.
+        Appends new titles and keeps unique, most recent first.
+        
+        Args:
+            resume_filename: The resume filename
+            titles: List of job titles to save (strings)
+        """
+        filepath = self._get_resume_history_file()
+        
+        # Load existing
+        if os.path.exists(filepath):
+            with open(filepath, "r", encoding="utf-8") as f:
+                history = json.load(f)
+        else:
+            history = {}
+        
+        # Get existing titles for this resume
+        existing = history.get(resume_filename, [])
+        
+        # Merge: new titles first, then existing, remove duplicates
+        combined = []
+        for t in titles:
+            t_clean = t.strip()
+            if t_clean and t_clean not in combined:
+                combined.append(t_clean)
+        for t in existing:
+            if t not in combined:
+                combined.append(t)
+        
+        # Limit to last 50 titles
+        history[resume_filename] = combined[:50]
+        
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2, ensure_ascii=False)
 

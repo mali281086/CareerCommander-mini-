@@ -3,7 +3,7 @@ import random
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
 from tools.browser_manager import BrowserManager
 from job_hunter.data_manager import DataManager
 
@@ -377,9 +377,31 @@ class JobApplier:
                         input_el.send_keys(answer)
                         print(f"[LinkedIn] Answered '{label_text}' → '{answer}'")
                     else:
-                        # Log as unknown question
-                        print(f"[LinkedIn] ❓ Unknown question: '{label_text}'")
-                        self.db.log_unknown_question(label_text, self.current_job_title, self.current_company)
+                        # Handle common questions with safe defaults
+                        label_lower = label_text.lower()
+                        default_answer = None
+                        
+                        # Questions that can be answered with N/A or empty
+                        skip_questions = [
+                            "website", "personal website", "portfolio",
+                            "linkedin profile", "linkedin",
+                            "employee's name", "employee name", "referral",
+                            "referred by", "who referred"
+                        ]
+                        
+                        for skip_q in skip_questions:
+                            if skip_q in label_lower:
+                                default_answer = "N/A"
+                                break
+                        
+                        if default_answer:
+                            input_el.clear()
+                            input_el.send_keys(default_answer)
+                            print(f"[LinkedIn] Filled '{label_text}' → '{default_answer}' (default)")
+                        else:
+                            # Log as unknown question
+                            print(f"[LinkedIn] ❓ Unknown question: '{label_text}'")
+                            self.db.log_unknown_question(label_text, self.current_job_title, self.current_company)
                 except:
                     continue
         except:
@@ -390,10 +412,42 @@ class JobApplier:
             selects = self.driver.find_elements(By.CSS_SELECTOR, "select")
             for select in selects:
                 try:
-                    # Get the label
-                    parent = select.find_element(By.XPATH, "./..")
-                    label_el = parent.find_element(By.CSS_SELECTOR, "label, span")
-                    label_text = label_el.text.strip() if label_el else "dropdown"
+                    # Check if already has a valid selection
+                    from selenium.webdriver.support.ui import Select
+                    sel_obj = Select(select)
+                    current_selected = sel_obj.first_selected_option.text.strip()
+                    if current_selected and current_selected.lower() not in ["", "select", "auswählen", "bitte wählen", "please select", "--"]:
+                        continue  # Already has a valid selection
+                    
+                    # Try multiple patterns to find the label
+                    label_text = ""
+                    try:
+                        # Pattern 1: label element with for attribute
+                        select_id = select.get_attribute("id")
+                        if select_id:
+                            label_el = self.driver.find_element(By.CSS_SELECTOR, f"label[for='{select_id}']")
+                            label_text = label_el.text.strip()
+                    except:
+                        pass
+                    
+                    if not label_text:
+                        try:
+                            # Pattern 2: label in parent div
+                            parent = select.find_element(By.XPATH, "./ancestor::div[1]")
+                            label_el = parent.find_element(By.CSS_SELECTOR, "label, legend, span.t-bold")
+                            label_text = label_el.text.strip()
+                        except:
+                            pass
+                    
+                    if not label_text:
+                        try:
+                            # Pattern 3: preceding sibling text
+                            label_el = select.find_element(By.XPATH, "./preceding-sibling::label | ./preceding::label[1]")
+                            label_text = label_el.text.strip()
+                        except:
+                            label_text = "dropdown"
+                    
+                    print(f"[LinkedIn] Dropdown found: '{label_text}'")
                     
                     # Get answer from config
                     answer = self.db.get_answer_for_question(label_text)
@@ -405,19 +459,50 @@ class JobApplier:
                     
                     # If we have a configured answer, try to match
                     if answer:
+                        matched = False
                         for opt in options:
                             if answer.lower() in opt.text.lower():
-                                opt.click()
-                                print(f"[LinkedIn] Selected '{opt.text}' for '{label_text}'")
+                                sel_obj.select_by_visible_text(opt.text)
+                                print(f"[LinkedIn] ✅ Selected saved answer '{opt.text}' for '{label_text}'")
+                                matched = True
                                 break
-                    else:
-                        # Default: select first non-empty option
-                        for opt in options[1:]:  # Skip first empty option
-                            if opt.text.strip():
-                                opt.click()
-                                print(f"[LinkedIn] Auto-selected '{opt.text}' for dropdown")
+                        if matched:
+                            continue
+                    
+                    # No saved answer - use smart selection and log the question
+                    print(f"[LinkedIn] ⚠️ No saved answer for: '{label_text}', using smart selection...")
+                    self.db.log_unknown_question(label_text, self.current_job_title, self.current_company)
+                    
+                    # Smart selection: prefer higher values, avoid "Gar nicht", "Keine", "0"
+                    negative_terms = ['gar nicht', 'keine', 'kein', 'never', 'none', 'not at all', '0 ']
+                    prefer_terms = ['5+', '10+', '3+', '4+', 'more than', 'über', 'ja', 'yes', 'expert', 'erfahren']
+                    
+                    selected = False
+                    # First try to find a preferred option
+                    for opt in options[1:]:
+                        opt_text = opt.text.lower().strip()
+                        if any(p in opt_text for p in prefer_terms):
+                            sel_obj.select_by_visible_text(opt.text)
+                            print(f"[LinkedIn] Selected preferred '{opt.text}' for dropdown")
+                            selected = True
+                            break
+                    
+                    # If no preferred, select last non-negative option (usually highest value)
+                    if not selected:
+                        for opt in reversed(list(options[1:])):  # Reverse to get highest first
+                            opt_text = opt.text.lower().strip()
+                            if opt_text and not any(n in opt_text for n in negative_terms):
+                                sel_obj.select_by_visible_text(opt.text)
+                                print(f"[LinkedIn] Selected '{opt.text}' for dropdown (highest)")
+                                selected = True
                                 break
-                except:
+                    
+                    # Fallback: just select first if nothing else worked
+                    if not selected and len(options) > 1:
+                        sel_obj.select_by_index(1)
+                        print(f"[LinkedIn] Selected fallback '{options[1].text}' for dropdown")
+                except Exception as e:
+                    print(f"[LinkedIn] Dropdown error: {str(e)[:50]}")
                     continue
         except:
             pass
@@ -449,15 +534,30 @@ class JobApplier:
                             try:
                                 label = radio.find_element(By.XPATH, "./following-sibling::label | ../label | ../../label")
                                 if answer.lower() in label.text.lower():
-                                    radio.click()
+                                    self.driver.execute_script("arguments[0].click();", radio)
                                     print(f"[LinkedIn] Selected '{label.text}' for '{question_text}'")
                                     break
                             except:
                                 continue
                     else:
-                        # Default: select first option (usually "Yes")
-                        radios[0].click()
-                        print(f"[LinkedIn] Auto-selected first option for '{question_text}'")
+                        # Smart selection: prefer "Ja/Yes" over "Nein/No"
+                        yes_labels = ['ja', 'yes', 'agree', 'willing']
+                        selected = False
+                        
+                        for radio in radios:
+                            try:
+                                label = radio.find_element(By.XPATH, "./following-sibling::label | ../label | ../../label")
+                                if any(y in label.text.lower() for y in yes_labels):
+                                    self.driver.execute_script("arguments[0].click();", radio)
+                                    print(f"[LinkedIn] Selected 'Yes' option for '{question_text}'")
+                                    selected = True
+                                    break
+                            except:
+                                continue
+                        
+                        if not selected:
+                            self.driver.execute_script("arguments[0].click();", radios[0])
+                            print(f"[LinkedIn] Auto-selected first option for '{question_text}'")
                         
                         if question_text:
                             self.db.log_unknown_question(question_text, self.current_job_title, self.current_company)
@@ -471,13 +571,13 @@ class JobApplier:
             checkboxes = self.driver.find_elements(By.CSS_SELECTOR, "input[type='checkbox']:not(:checked)")
             for cb in checkboxes:
                 try:
-                    # Check if it's a required field
+                    # Check if it's a required/consent field
                     parent = cb.find_element(By.XPATH, "./..")
                     label_text = parent.text.lower()
                     
                     # Auto-check consent boxes
-                    if "agree" in label_text or "terms" in label_text or "consent" in label_text:
-                        cb.click()
+                    if any(t in label_text for t in ["agree", "terms", "consent", "einwillig", "zustimm", "akzeptier"]):
+                        self.driver.execute_script("arguments[0].click();", cb)
                         print("[LinkedIn] Checked consent checkbox")
                 except:
                     continue
@@ -588,17 +688,17 @@ class JobApplier:
     def live_apply_linkedin(self, keyword, location, target_count=5, callback=None):
         """
         Browse LinkedIn job search and apply to jobs until target_count is reached.
-        Skips: already applied, parked, blacklisted jobs.
-        
-        Args:
-            keyword: Job search keyword
-            location: Location to search
-            target_count: Number of successful applications to make
-            callback: Optional function to call with status updates (for UI)
+        Workflow:
+        1. Search with keyword, location, Easy Apply filter (ONCE)
+        2. Click each job card to load details in side panel
+        3. Check for 'Beworben' (already applied) status
+        4. If not applied, click Easy Apply and complete form
+        5. Move to next card (no navigation away from search)
         
         Returns:
-            dict with results: applied_jobs, skipped_jobs, errors
+            dict with results: applied, skipped, errors
         """
+        applied_count = 0
         results = {
             "applied": [],
             "skipped": [],
@@ -606,18 +706,7 @@ class JobApplier:
             "checked": 0
         }
         
-        # Load filters from data manager
-        applied_jobs = self.db.load_applied()
-        applied_links = set()
-        for v in applied_jobs.values():
-            details = v.get('job_details', {})
-            lnk = details.get('Web Address') or details.get('link')
-            if lnk:
-                applied_links.add(lnk)
-        
-        parked_jobs = self.db.load_parked()
-        parked_links = {p.get('link') for p in parked_jobs if p.get('link')}
-        
+        # Load filters
         blacklist = self.db.load_blacklist()
         bl_companies = [c.lower() for c in blacklist.get("companies", []) if c]
         bl_titles = [t.lower() for t in blacklist.get("titles", []) if t]
@@ -629,204 +718,443 @@ class JobApplier:
                 callback(msg)
         
         def is_blacklisted(title, company):
-            """Check if job should be skipped based on blacklist."""
             t_lower = title.lower()
             c_lower = company.lower()
             
-            # Company blacklist (always blocks)
             for bl_c in bl_companies:
                 if bl_c in c_lower:
-                    return True, f"Company '{company}' is blacklisted"
+                    return True, f"Company blacklisted"
             
-            # Title blacklist (can be rescued by safe phrases)
             for bl_t in bl_titles:
                 if bl_t in t_lower:
-                    # Check safe phrases
                     for safe in safe_phrases:
                         if safe in t_lower:
-                            return False, None  # Rescued!
-                    return True, f"Title contains blacklisted term '{bl_t}'"
+                            return False, None
+                    return True, f"Title blacklisted"
             
             return False, None
         
-        # Navigate to LinkedIn Jobs Search
-        search_url = f"https://www.linkedin.com/jobs/search/?keywords={keyword.replace(' ', '+')}&location={location.replace(' ', '+')}"
-        log(f"Navigating to: {search_url}")
+        # Navigate to LinkedIn Jobs Search with Easy Apply filter
+        search_url = f"https://www.linkedin.com/jobs/search/?keywords={keyword.replace(' ', '+')}&location={location.replace(' ', '+')}&f_AL=true"
+        log(f"🔍 Navigating to: {search_url}")
         self.driver.get(search_url)
         self.random_sleep(4, 6)
         
-        # Click the Easy Apply filter button (Einfach bewerben / Easy Apply)
-        log("🔍 Clicking Easy Apply filter...")
-        easy_apply_filter_clicked = False
-        
-        # Try multiple selectors for the filter button
-        filter_selectors = [
-            "button[aria-label*='Easy Apply']",
-            "button[aria-label*='Einfach bewerben']",
-            "button.search-reusables__filter-binary-toggle",
-            "//button[contains(text(), 'Easy Apply')]",
-            "//button[contains(text(), 'Einfach bewerben')]",
-        ]
-        
-        for selector in filter_selectors:
-            try:
-                if selector.startswith("//"):
-                    # XPath
-                    btn = self.driver.find_element(By.XPATH, selector)
-                else:
-                    btn = self.driver.find_element(By.CSS_SELECTOR, selector)
-                
-                if btn and btn.is_displayed():
-                    # Check if it's the Easy Apply filter specifically
-                    btn_text = btn.text.lower()
-                    aria_label = (btn.get_attribute("aria-label") or "").lower()
-                    
-                    if "easy" in btn_text or "einfach" in btn_text or "easy" in aria_label or "einfach" in aria_label:
-                        btn.click()
-                        easy_apply_filter_clicked = True
-                        log("✅ Easy Apply filter clicked!")
-                        self.random_sleep(2, 3)
-                        break
-            except:
-                continue
-        
-        # Fallback: Try to find the filter in the "All Filters" modal
-        if not easy_apply_filter_clicked:
-            try:
-                # Look for the filter button directly in the filter bar
-                all_buttons = self.driver.find_elements(By.CSS_SELECTOR, "button")
-                for btn in all_buttons:
-                    try:
-                        btn_text = btn.text.lower().strip()
-                        if btn_text in ["easy apply", "einfach bewerben"]:
-                            btn.click()
-                            easy_apply_filter_clicked = True
-                            log("✅ Easy Apply filter clicked via text search!")
-                            self.random_sleep(2, 3)
-                            break
-                    except:
-                        continue
-            except:
-                pass
-        
-        if not easy_apply_filter_clicked:
-            log("⚠️ Could not click Easy Apply filter - will check each job individually")
+        # Verify Easy Apply filter is active (f_AL=true in URL should work)
+        log("✅ Easy Apply filter applied via URL parameter")
         
         page = 0
-        max_pages = 20  # Safety limit
+        max_pages = 20
+        processed_jobs = set()  # Track processed jobs by title+company to avoid duplicates
         
-        while self.applied_count < target_count and page < max_pages:
+        while applied_count < target_count and page < max_pages:
             page += 1
-            log(f"📄 Scanning page {page}...")
+            log(f"📄 Page {page} - Applied: {applied_count}/{target_count}")
             
-            # Find job cards on current page
-            try:
-                job_cards = self.driver.find_elements(By.CSS_SELECTOR, ".jobs-search-results__list-item, .job-card-container, .jobs-search-results-list__list-item")
-                log(f"Found {len(job_cards)} job cards")
-            except:
-                job_cards = []
+            # Scroll to load all job cards
+            job_list = self.find_element_safe(".jobs-search-results-list, .scaffold-layout__list", timeout=5)
+            if job_list:
+                self.driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", job_list)
+                self.random_sleep(1, 2)
             
-            if not job_cards:
-                log("No job cards found, trying to scroll...")
-                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                self.random_sleep(2, 3)
-                continue
+            # Use index-based iteration to avoid stale elements
+            card_index = 0
+            max_cards_per_page = 50
             
-            for idx, card in enumerate(job_cards):
-                if self.applied_count >= target_count:
-                    break
+            while applied_count < target_count and card_index < max_cards_per_page:
+                # Always re-fetch the job cards list (DOM may have changed)
+                try:
+                    job_cards = self.driver.find_elements(By.CSS_SELECTOR, 
+                        ".jobs-search-results__list-item, .job-card-container, .scaffold-layout__list-item")
+                except:
+                    job_cards = []
                 
+                if card_index == 0:
+                    log(f"Found {len(job_cards)} job cards")
+                
+                if card_index >= len(job_cards):
+                    break  # No more cards on this page
+                
+                card = job_cards[card_index]
+                card_index += 1
                 results["checked"] += 1
                 
                 try:
-                    # Click the card to load job details
-                    self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", card)
-                    self.random_sleep(0.5, 1)
-                    card.click()
-                    self.random_sleep(2, 3)
+                    # Click card with retry for stale elements
+                    card_clicked = False
+                    for retry in range(3):
+                        try:
+                            # Re-fetch card if we're retrying
+                            if retry > 0:
+                                job_cards = self.driver.find_elements(By.CSS_SELECTOR, 
+                                    ".jobs-search-results__list-item, .job-card-container, .scaffold-layout__list-item")
+                                if card_index - 1 < len(job_cards):
+                                    card = job_cards[card_index - 1]
+                                else:
+                                    break
+                            
+                            # Scroll card into view and click using JavaScript
+                            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", card)
+                            self.random_sleep(0.3, 0.5)
+                            self.driver.execute_script("arguments[0].click();", card)
+                            card_clicked = True
+                            break
+                        except StaleElementReferenceException:
+                            self.random_sleep(0.5, 1.0)
+                            continue
                     
-                    # Get job URL
-                    current_url = self.driver.current_url
+                    if not card_clicked:
+                        log(f"   ⚠️ Card stale after retries, skipping...")
+                        continue
                     
-                    # Extract job title and company from the page
+                    self.random_sleep(1.5, 2.5)
+                    
+                    # Extract job title and company from side panel
                     try:
-                        title_el = self.driver.find_element(By.CSS_SELECTOR, ".jobs-unified-top-card__job-title, .job-details-jobs-unified-top-card__job-title, h1.t-24")
+                        title_el = self.driver.find_element(By.CSS_SELECTOR, 
+                            ".job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title, h2.t-24")
                         title = title_el.text.strip()
                     except:
                         title = "Unknown"
                     
                     try:
-                        company_el = self.driver.find_element(By.CSS_SELECTOR, ".jobs-unified-top-card__company-name, .job-details-jobs-unified-top-card__company-name, .jobs-unified-top-card__subtitle-primary-grouping a")
+                        company_el = self.driver.find_element(By.CSS_SELECTOR, 
+                            ".job-details-jobs-unified-top-card__company-name, .jobs-unified-top-card__company-name")
                         company = company_el.text.strip()
                     except:
                         company = "Unknown"
                     
-                    log(f"[{idx+1}/{len(job_cards)}] Checking: {title} @ {company}")
+                    # Track by job title+company to avoid processing same job twice
+                    job_key = f"{title}_{company}".lower()
+                    if job_key in processed_jobs:
+                        continue  # Skip duplicate job
+                    processed_jobs.add(job_key)
                     
-                    # Check if already applied
-                    if current_url in applied_links:
-                        log(f"   ⏭️ Already applied - skipping")
-                        results["skipped"].append({"title": title, "company": company, "reason": "Already applied"})
-                        continue
+                    log(f"[{card_index}] {title} @ {company}")
                     
-                    # Check if parked
-                    if current_url in parked_links:
-                        log(f"   ⏭️ In parked jobs - skipping")
-                        results["skipped"].append({"title": title, "company": company, "reason": "Parked"})
-                        continue
+                    # CHECK 1: Is "Beworben" (already applied) shown?
+                    try:
+                        applied_badge = self.driver.find_element(By.XPATH, 
+                            "//*[contains(text(), 'Beworben') or contains(text(), 'Applied') or contains(@class, 'applied')]")
+                        if applied_badge:
+                            log(f"   ⏭️ Already applied (Beworben)")
+                            results["skipped"].append({"title": title, "company": company, "reason": "Already applied"})
+                            continue
+                    except:
+                        pass  # Not applied - good!
                     
-                    # Check blacklist
+                    # CHECK 2: Blacklist check
                     is_blocked, reason = is_blacklisted(title, company)
                     if is_blocked:
-                        log(f"   ⏭️ Blacklisted: {reason}")
+                        log(f"   ⏭️ {reason}")
                         results["skipped"].append({"title": title, "company": company, "reason": reason})
                         continue
                     
-                    # Try to apply
+                    # APPLY: Click Easy Apply button in side panel
                     log(f"   🎯 Attempting to apply...")
+                    
+                    # First scroll the job description (like EAB does)
+                    try:
+                        job_desc_area = self.driver.find_element(By.CLASS_NAME, "jobs-search__job-details--container")
+                        self.driver.execute_script("arguments[0].scrollTo(0, 800)", job_desc_area)
+                        self.random_sleep(0.5, 1.0)
+                        self.driver.execute_script("arguments[0].scrollTo(0, 0)", job_desc_area)
+                    except:
+                        pass
+                    
+                    # Check if this is an EXTERNAL apply job (not Easy Apply)
+                    try:
+                        external_btn = self.driver.find_element(By.XPATH, 
+                            "//button[contains(text(), 'Anwenden')] | //a[contains(text(), 'Anwenden')] | //span[text()='Anwenden']/ancestor::button")
+                        if external_btn and external_btn.is_displayed():
+                            log(f"   ⏭️ External apply job (not Easy Apply)")
+                            results["skipped"].append({"title": title, "company": company, "reason": "External apply"})
+                            continue
+                    except:
+                        pass  # Not external - continue to Easy Apply
+                    
+                    # Find Easy Apply button with retry logic (EAB pattern)
+                    easy_apply_btn = None
+                    max_retries = 3
+                    
+                    for retry in range(max_retries):
+                        try:
+                            # Try by class name first (most reliable per EAB)
+                            easy_apply_btn = self.driver.find_element(By.CLASS_NAME, 'jobs-apply-button')
+                            if easy_apply_btn and easy_apply_btn.is_displayed():
+                                break
+                        except (StaleElementReferenceException, NoSuchElementException):
+                            pass
+                        
+                        # Try other selectors
+                        for sel in ["button[aria-label*='Easy Apply']", "button[aria-label*='Einfach bewerben']"]:
+                            try:
+                                easy_apply_btn = self.driver.find_element(By.CSS_SELECTOR, sel)
+                                if easy_apply_btn and easy_apply_btn.is_displayed():
+                                    break
+                            except:
+                                continue
+                        
+                        if easy_apply_btn:
+                            break
+                        self.random_sleep(0.5, 1.0)
+                    
+                    if not easy_apply_btn:
+                        log(f"   ⚠️ Easy Apply button not found (may be external)")
+                        results["skipped"].append({"title": title, "company": company, "reason": "No Easy Apply"})
+                        continue
+                    
+                    # Click Easy Apply button (with retry for stale element)
+                    clicked = False
+                    for retry in range(max_retries):
+                        try:
+                            easy_apply_btn.click()
+                            clicked = True
+                            break
+                        except StaleElementReferenceException:
+                            self.random_sleep(0.5, 1.0)
+                            try:
+                                easy_apply_btn = self.driver.find_element(By.CLASS_NAME, 'jobs-apply-button')
+                            except:
+                                pass
+                        except Exception:
+                            # Fallback to JavaScript click
+                            try:
+                                self.driver.execute_script("arguments[0].click();", easy_apply_btn)
+                                clicked = True
+                                break
+                            except:
+                                pass
+                    
+                    if not clicked:
+                        log(f"   ⚠️ Could not click Easy Apply button")
+                        results["errors"].append({"title": title, "company": company, "error": "Click failed"})
+                        continue
+                    
+                    self.random_sleep(2, 3)
+                    
+                    # Process the modal
                     self.current_job_title = title
                     self.current_company = company
                     
-                    success, message, is_easy = self.apply_linkedin(current_url, skip_detection=True)
+                    apply_success = self._process_linkedin_modal()
                     
-                    if success:
-                        log(f"   ✅ Applied successfully!")
-                        results["applied"].append({"title": title, "company": company, "url": current_url})
-                        applied_links.add(current_url)  # Add to set so we don't retry
+                    if apply_success:
+                        applied_count += 1
+                        self.applied_count += 1
+                        log(f"   ✅ Applied! ({applied_count}/{target_count})")
+                        results["applied"].append({"title": title, "company": company})
                         
                         # Save to applied jobs
                         jid = f"{title}-{company}"
-                        job_data = {"Job Title": title, "Company": company, "Web Address": current_url, "Platform": "LinkedIn"}
+                        job_url = self.driver.current_url
+                        job_data = {"Job Title": title, "Company": company, "Web Address": job_url, "Platform": "LinkedIn"}
                         self.db.save_applied(jid, job_data, {"auto_applied": True})
+                        
+                        # After successful application, wait a bit for DOM to stabilize
+                        self.random_sleep(2, 3)
                     else:
-                        log(f"   ❌ Failed: {message}")
-                        if is_easy:
-                            results["errors"].append({"title": title, "company": company, "error": message})
-                        else:
-                            results["skipped"].append({"title": title, "company": company, "reason": "Not Easy Apply"})
+                        log(f"   ❌ Failed to complete application")
+                        results["errors"].append({"title": title, "company": company, "error": "Modal failed"})
                     
-                    # Navigate back to search results
-                    self.driver.get(search_url)
-                    self.random_sleep(2, 3)
-                    
+                except StaleElementReferenceException:
+                    log(f"   ⚠️ Stale element, retrying...")
+                    continue
                 except Exception as e:
-                    log(f"   ⚠️ Error processing card: {e}")
+                    log(f"   ⚠️ Error: {str(e)[:50]}")
                     results["errors"].append({"error": str(e)})
                     continue
             
             # Go to next page if needed
-            if self.applied_count < target_count:
+            if applied_count < target_count:
                 try:
-                    # Try to click next page
-                    next_btn = self.driver.find_element(By.CSS_SELECTOR, "button[aria-label='Page forward'], button[aria-label='Next'], li.artdeco-pagination__indicator--number:not(.active) button")
+                    next_btn = self.driver.find_element(By.CSS_SELECTOR, 
+                        "button[aria-label='Weiter'], button[aria-label='Next'], li.artdeco-pagination__indicator--number button")
                     next_btn.click()
+                    log("➡️ Moving to next page...")
                     self.random_sleep(3, 4)
                 except:
-                    log("No more pages or couldn't navigate to next page")
+                    log("📄 No more pages available")
                     break
         
-        log(f"🏁 Live Apply Complete! Applied: {len(results['applied'])} | Skipped: {len(results['skipped'])} | Errors: {len(results['errors'])}")
+        log(f"🏁 Complete! Applied: {applied_count} | Checked: {results['checked']} | Skipped: {len(results['skipped'])}")
         return results
+    
+    def _process_linkedin_modal(self):
+        """
+        Process the LinkedIn Easy Apply modal and submit application.
+        Based on EAB patterns: loop until submit button text found, use primary button class.
+        """
+        max_steps = 15
+        submit_texts = ['submit application', 'bewerbung senden', 'absenden']
+        had_errors = False  # Track if we encountered errors
+        consecutive_errors = 0  # Track consecutive validation errors
+        last_step_with_error = -1
+        
+        for step in range(max_steps):
+            self.random_sleep(1.0, 2.0)
+            
+            # Check for success message first
+            try:
+                success_indicators = [
+                    "//*[contains(text(), 'Bewerbung gesendet')]",
+                    "//*[contains(text(), 'Application sent')]",
+                    "//*[contains(text(), 'successfully submitted')]",
+                    "//*[contains(text(), 'erfolgreich')]"
+                ]
+                for xpath in success_indicators:
+                    try:
+                        self.driver.find_element(By.XPATH, xpath)
+                        print("[LinkedIn] ✅ Application submitted successfully!")
+                        # Close any confirmation modal
+                        try:
+                            dismiss = self.driver.find_element(By.CLASS_NAME, 'artdeco-modal__dismiss')
+                            dismiss.click()
+                        except:
+                            pass
+                        return True
+                    except:
+                        continue
+            except:
+                pass
+            
+            # Check if modal is still open
+            modal_open = False
+            try:
+                modal = self.driver.find_element(By.CLASS_NAME, "jobs-easy-apply-modal__content")
+                modal_open = True
+            except:
+                try:
+                    modal = self.driver.find_element(By.CSS_SELECTOR, ".artdeco-modal")
+                    modal_open = True
+                except:
+                    pass
+            
+            if not modal_open:
+                # Modal closed - check if we had errors
+                if had_errors:
+                    print("[LinkedIn] ❌ Modal closed after errors - application likely failed")
+                    return False
+                else:
+                    print("[LinkedIn] Modal closed, assuming success")
+                    return True
+            
+            # Fill form fields on current page
+            self._linkedin_fill_fields()
+            
+            # Find the primary action button (Next / Submit / Review)
+            try:
+                primary_btn = self.driver.find_element(By.CLASS_NAME, "artdeco-button--primary")
+                button_text = primary_btn.text.lower()
+                
+                print(f"[LinkedIn] Step {step+1}: Button text = '{button_text}'")
+                
+                # Check if this is the submit button
+                if any(submit_text in button_text for submit_text in submit_texts):
+                    # Try to unfollow company first
+                    try:
+                        follow_checkbox = self.driver.find_element(By.XPATH,
+                            "//label[contains(.,'to stay up to date with their page.') or contains(.,'folgen')]")
+                        follow_checkbox.click()
+                        print("[LinkedIn] Unfollowed company")
+                    except:
+                        pass
+                    
+                    # Click submit
+                    self.random_sleep(0.5, 1.0)
+                    primary_btn.click()
+                    self.random_sleep(2.0, 3.0)
+                    
+                    # Check for errors after submit
+                    error_messages = [
+                        'enter a valid', 'file is required', 'make a selection',
+                        'whole number', 'pflichtfeld', 'erforderlich', 'required'
+                    ]
+                    page_source = self.driver.page_source.lower()
+                    if any(err in page_source for err in error_messages):
+                        print("[LinkedIn] ⚠️ Form validation error detected")
+                        had_errors = True
+                        consecutive_errors += 1
+                        if consecutive_errors >= 3:
+                            print("[LinkedIn] ❌ Too many consecutive errors, giving up")
+                            break
+                        continue  # Try to fill again
+                    
+                    # Close confirmation dialogs
+                    self.random_sleep(1.0, 2.0)
+                    for dismiss_class in ['artdeco-modal__dismiss', 'artdeco-toast-item__dismiss']:
+                        try:
+                            self.driver.find_element(By.CLASS_NAME, dismiss_class).click()
+                        except:
+                            pass
+                    
+                    return True
+                else:
+                    # Click Next/Continue/Review
+                    primary_btn.click()
+                    self.random_sleep(1.5, 2.5)
+                    
+                    # Check for errors after clicking
+                    error_messages = [
+                        'enter a valid', 'file is required', 'make a selection',
+                        'whole number', 'pflichtfeld', 'erforderlich'
+                    ]
+                    page_source = self.driver.page_source.lower()
+                    if any(err in page_source for err in error_messages):
+                        print("[LinkedIn] ⚠️ Validation error, filling fields again...")
+                        had_errors = True
+                        
+                        # Track consecutive errors on same step
+                        if step == last_step_with_error:
+                            consecutive_errors += 1
+                        else:
+                            consecutive_errors = 1
+                            last_step_with_error = step
+                        
+                        # If stuck on same step, give up
+                        if consecutive_errors >= 3:
+                            print("[LinkedIn] ❌ Stuck on validation errors, cannot proceed")
+                            break
+                        
+                        self._linkedin_fill_fields()  # Try to fill again
+                    else:
+                        consecutive_errors = 0  # Reset on success
+                        
+            except Exception as e:
+                print(f"[LinkedIn] No primary button found: {str(e)[:50]}")
+                had_errors = True
+                
+                # Try to dismiss and fail
+                if step > 5:
+                    try:
+                        dismiss = self.driver.find_element(By.CLASS_NAME, 'artdeco-modal__dismiss')
+                        dismiss.click()
+                        self.random_sleep(0.5, 1.0)
+                        try:
+                            confirm = self.driver.find_elements(By.CLASS_NAME, 'artdeco-modal__confirm-dialog-btn')
+                            if confirm:
+                                confirm[0].click()
+                        except:
+                            pass
+                        return False
+                    except:
+                        pass
+        
+        # Max steps reached or gave up - try to dismiss
+        print("[LinkedIn] ⚠️ Max steps reached or errors, dismissing modal")
+        try:
+            self.driver.find_element(By.CLASS_NAME, 'artdeco-modal__dismiss').click()
+            self.random_sleep(0.5, 1.0)
+            # Click confirm if discard dialog appears
+            try:
+                confirm = self.driver.find_elements(By.CLASS_NAME, 'artdeco-modal__confirm-dialog-btn')
+                if confirm:
+                    confirm[0].click()
+            except:
+                pass
+        except:
+            pass
+        return False
     
     # ==========================================
     # LIVE APPLY MODE - Xing
