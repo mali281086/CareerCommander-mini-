@@ -10,6 +10,16 @@ from job_hunter.data_manager import DataManager
 class JobApplier:
     """Handles automated Easy Apply for LinkedIn and Xing."""
     
+    # List of localized strings indicating a job has already been applied to
+    APPLIED_INDICATORS = [
+        "beworben", "applied", "candidature confirmée", "postulado",
+        "bewerbung ansehen", "view application", "solicitud enviada",
+        "già candidato", "aanmelding verzonden", "zaplikowano",
+        "candidatado", "already applied", "du hast dich beworben",
+        "application submitted", "candidature envoyée", "votre candidature a été envoyée",
+        "solicitud confirmada", "candidatura inviata"
+    ]
+
     def __init__(self, resume_path=None, phone_number=None):
         self.bm = BrowserManager()
         self.driver = self.bm.get_driver(headless=False)  # Always visible for safety
@@ -123,11 +133,14 @@ class JobApplier:
         # Keywords that indicate EXTERNAL APPLY (should skip)
         external_keywords = [
             "visit employer",
+            "visit employer website",
             "zur arbeitgeber",   # German: To Employer
             "external",
             "website",
             "karriereseite",     # German: Career Site
             "zur bewerbung beim arbeitgeber",
+            "apply on company site",
+            "auf der seite des arbeitgebers bewerben"
         ]
         
         # Look for apply buttons and check their text
@@ -702,8 +715,7 @@ class JobApplier:
             "button[data-testid='apply-button']",
             "a[data-testid='apply-button']",
             "button.apply-button",
-            "a.apply-button",
-            "button:contains('Jetzt bewerben')"  # German: Apply Now
+            "a.apply-button"
         ]
         
         clicked = False
@@ -838,6 +850,7 @@ class JobApplier:
         
         # Verify Easy Apply filter is active (f_AL=true in URL should work)
         log("✅ Easy Apply filter applied via URL parameter")
+        self._ensure_linkedin_easy_apply_filter()
         
         page = 0
         max_pages = 20
@@ -883,7 +896,7 @@ class JobApplier:
                     # Quick check if already applied on card text
                     try:
                         card_text = card.text.lower()
-                        if "beworben" in card_text or "applied" in card_text:
+                        if any(ind in card_text for ind in self.APPLIED_INDICATORS):
                             log(f"   ⏭️ Already applied (via card text)")
                             results["skipped"].append({"title": "Unknown", "company": "Unknown", "reason": "Already applied"})
                             continue
@@ -949,12 +962,18 @@ class JobApplier:
                     # CHECK 1: Is "Beworben" (already applied) shown in the detail panel?
                     try:
                         # Scope to detail panel to avoid finding other cards' badges
-                        detail_panel = self.find_element_safe(".jobs-search__job-details, .scaffold-layout__detail", timeout=3)
+                        detail_panel = self.find_element_safe(".jobs-search__job-details, .scaffold-layout__detail, .jobs-search-two-pane__details", timeout=3)
                         if detail_panel:
-                            applied_badge = detail_panel.find_elements(By.XPATH,
-                                ".//*[contains(text(), 'Beworben') or contains(text(), 'Applied') or contains(@class, 'applied')]")
-                            if applied_badge:
-                                log(f"   ⏭️ Already applied (Beworben in details)")
+                            # Check for common "Applied" indicators in various languages
+                            found_applied = False
+                            panel_text = detail_panel.text.lower()
+                            for indicator in self.APPLIED_INDICATORS:
+                                if indicator in panel_text:
+                                    found_applied = True
+                                    break
+
+                            if found_applied:
+                                log(f"   ⏭️ Already applied (detected in details)")
                                 results["skipped"].append({"title": title, "company": company, "reason": "Already applied"})
                                 continue
                     except:
@@ -984,7 +1003,10 @@ class JobApplier:
                         external_btn = self.driver.find_element(By.XPATH, 
                             "//button[contains(text(), 'Anwenden')] | //a[contains(text(), 'Anwenden')] | //span[text()='Anwenden']/ancestor::button")
                         if external_btn and external_btn.is_displayed():
-                            log(f"   ⏭️ External apply job (not Easy Apply)")
+                            log(f"   ⚠️ External apply job detected (filter might have dropped). Re-verifying Easy Apply filter...")
+                            if self._ensure_linkedin_easy_apply_filter():
+                                log("   ♻️ Filter re-applied. Skipping this job as it was likely a leftover.")
+
                             results["skipped"].append({"title": title, "company": company, "reason": "External apply"})
                             continue
                     except:
@@ -1096,6 +1118,8 @@ class JobApplier:
                     next_btn.click()
                     log("➡️ Moving to next page...")
                     self.random_sleep(3, 4)
+                    # Re-verify filter on new page to be sure
+                    self._ensure_linkedin_easy_apply_filter()
                 except:
                     log("📄 No more pages available")
                     break
@@ -1417,9 +1441,18 @@ class JobApplier:
                     
                     log(f"[{idx+1}/{len(job_cards)}] Checking: {title} @ {company}")
                     
-                    # Check if already applied
+                    # Check if already applied (via DB)
                     if current_url in applied_links:
-                        log(f"   ⏭️ Already applied - skipping")
+                        log(f"   ⏭️ Already applied (DB) - skipping")
+                        results["skipped"].append({"title": title, "company": company, "reason": "Already applied"})
+                        self.driver.close()
+                        self.driver.switch_to.window(search_handle)
+                        continue
+
+                    # Check if already applied (via UI)
+                    page_text = self.driver.page_source.lower()
+                    if any(ind in page_text for ind in self.APPLIED_INDICATORS):
+                        log(f"   ⏭️ Already applied (UI) - skipping")
                         results["skipped"].append({"title": title, "company": company, "reason": "Already applied"})
                         self.driver.close()
                         self.driver.switch_to.window(search_handle)
@@ -1505,6 +1538,76 @@ class JobApplier:
         log(f"🏁 Xing Live Apply Complete! Applied: {len(results['applied'])} | Skipped: {len(results['skipped'])} | Errors: {len(results['errors'])}")
         return results
     
+    def _ensure_linkedin_easy_apply_filter(self):
+        """Checks if Easy Apply filter is active on the current search page, clicks it if not."""
+        try:
+            # Wait for filter bar to load
+            self.random_sleep(1, 2)
+
+            # Common selectors for the Easy Apply filter button/pill
+            # LinkedIn often uses artdeco-pill components for these filters
+            filter_selectors = [
+                "button[aria-label*='Easy Apply']",
+                "button[aria-label*='Einfach bewerben']",
+                "//button[contains(., 'Easy Apply filter')]",
+                "//button[contains(., 'Filter für Einfach bewerben')]",
+                "//button[contains(., 'Easy Apply')]",
+                "//button[contains(., 'Einfach bewerben')]"
+            ]
+
+            filter_btn = None
+            for selector in filter_selectors:
+                try:
+                    if selector.startswith("//"):
+                        filter_btn = self.driver.find_element(By.XPATH, selector)
+                    else:
+                        filter_btn = self.driver.find_element(By.CSS_SELECTOR, selector)
+
+                    if filter_btn and filter_btn.is_displayed():
+                        break
+                except:
+                    continue
+
+            if filter_btn:
+                # Check state
+                classes = filter_btn.get_attribute("class") or ""
+                pressed = filter_btn.get_attribute("aria-pressed") or "false"
+
+                # Active pills usually have a 'selected' class or aria-pressed="true"
+                # LinkedIn specifically uses 'artdeco-pill--selected'
+                is_active = "selected" in classes.lower() or "active" in classes.lower() or pressed.lower() == "true"
+
+                if not is_active:
+                    print(f"[LinkedIn] Easy Apply filter not active in UI (classes: {classes}, pressed: {pressed}), clicking it...")
+                    try:
+                        # Sometimes clicking the button itself doesn't work if it's a pill with an inner span
+                        self.driver.execute_script("arguments[0].click();", filter_btn)
+                    except Exception as e:
+                        print(f"[LinkedIn] JS click failed: {e}")
+                        filter_btn.click()
+
+                    self.random_sleep(4, 6) # Wait for results to refresh
+
+                    # Double check if it became active
+                    try:
+                        classes_after = filter_btn.get_attribute("class") or ""
+                        if "selected" in classes_after.lower() or "active" in classes_after.lower():
+                            print("[LinkedIn] Easy Apply filter successfully activated.")
+                        else:
+                            print(f"[LinkedIn] Warning: Easy Apply filter still doesn't look active after click (classes: {classes_after})")
+                    except: pass
+
+                    return True
+                else:
+                    print("[LinkedIn] Easy Apply filter is already active in UI.")
+                    return True
+            else:
+                print("[LinkedIn] Could not find Easy Apply filter button in UI.")
+                return False
+        except Exception as e:
+            print(f"[LinkedIn] Error ensuring Easy Apply filter: {e}")
+            return False
+
     def close(self):
         """Clean up browser."""
         self.bm.close_driver()

@@ -33,6 +33,10 @@ class LinkedInScraper(BaseScraper):
             self.driver.get(url)
             self.random_sleep(3, 5)
             
+            # Verify Easy Apply filter is active in UI if requested
+            if easy_apply:
+                self._ensure_linkedin_easy_apply_filter()
+
             # Scroll logic to load jobs (basic implementation)
             # LinkedIn loads jobs in the sidebar (left rail) usually
             try:
@@ -110,3 +114,45 @@ class LinkedInScraper(BaseScraper):
 
         print(f"[LinkedIn] Scraped {len(results)} jobs.")
         return results
+
+    def _ensure_linkedin_easy_apply_filter(self):
+        """Checks if Easy Apply filter is active on the current search page, clicks it if not."""
+        try:
+            # Common selectors for the Easy Apply filter button/pill
+            filter_selectors = [
+                "button[aria-label*='Easy Apply']",
+                "button[aria-label*='Einfach bewerben']",
+                "//button[contains(., 'Easy Apply')]",
+                "//button[contains(., 'Einfach bewerben')]"
+            ]
+
+            filter_btn = None
+            for selector in filter_selectors:
+                try:
+                    if selector.startswith("//"):
+                        filter_btn = self.driver.find_element(By.XPATH, selector)
+                    else:
+                        filter_btn = self.driver.find_element(By.CSS_SELECTOR, selector)
+
+                    if filter_btn and filter_btn.is_displayed():
+                        break
+                except:
+                    continue
+
+            if filter_btn:
+                classes = filter_btn.get_attribute("class") or ""
+                pressed = filter_btn.get_attribute("aria-pressed") or "false"
+                is_active = "selected" in classes.lower() or "active" in classes.lower() or pressed.lower() == "true"
+
+                if not is_active:
+                    print(f"[LinkedIn Scraper] Easy Apply filter not active in UI (classes: {classes}), clicking it...")
+                    try:
+                        self.driver.execute_script("arguments[0].click();", filter_btn)
+                    except:
+                        filter_btn.click()
+                    time.sleep(5)
+                    return True
+            return False
+        except Exception as e:
+            print(f"[LinkedIn Scraper] Error ensuring Easy Apply filter: {e}")
+            return False
