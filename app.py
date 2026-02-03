@@ -668,7 +668,8 @@ if st.session_state['page'] == 'home':
                                     results = applier.live_apply_linkedin(
                                         keyword=kw,
                                         location=loc,
-                                        target_count=remaining
+                                        target_count=remaining,
+                                        target_role=kw
                                     )
                                     
                                     total_applied += len(results.get("applied", []))
@@ -688,7 +689,8 @@ if st.session_state['page'] == 'home':
                                         results = applier.live_apply_xing(
                                             keyword=kw,
                                             location=loc,
-                                            target_count=remaining
+                                            target_count=remaining,
+                                            target_role=kw
                                         )
                                         
                                         total_applied += len(results.get("applied", []))
@@ -1034,9 +1036,9 @@ elif st.session_state['page'] == 'explorer':
                          st.toast("No new applied jobs to archive.", icon="ℹ️")
             
             with c_easy:
-                # Count eligible jobs
+                # Count eligible jobs (skip those already applied)
                 apply_platforms = ["LinkedIn", "Xing"]
-                eligible_for_easy = display_df[display_df["Platform"].isin(apply_platforms)]
+                eligible_for_easy = display_df[display_df["Platform"].isin(apply_platforms) & ~display_df["Applied"]]
                 eligible_count = len(eligible_for_easy)
                 
                 if st.button(f"🤖 Easy Apply All ({eligible_count} jobs)", type="primary", use_container_width=True, disabled=(eligible_count == 0)):
@@ -1097,7 +1099,8 @@ elif st.session_state['page'] == 'explorer':
                         
                         status.text(f"🔍 Checking {i+1}/{total}: {title} @ {company}")
                         
-                        success, message, is_easy = applier.apply(job_url, platform, job_title=title, company=company)
+                        target_role = job.get("Found_job", "Unknown")
+                        success, message, is_easy = applier.apply(job_url, platform, job_title=title, company=company, target_role=target_role)
                         
                         if not is_easy:
                             skipped_count += 1
@@ -1106,7 +1109,13 @@ elif st.session_state['page'] == 'explorer':
                             applied_count += 1
                             results_log.append({"Job": title, "Company": company, "Status": "✅ Applied", "Message": message})
                             jid = f"{title}-{company}"
-                            job_data = {"Job Title": title, "Company": company, "Web Address": job_url, "Platform": platform}
+                            job_data = {
+                                "Job Title": title,
+                                "Company": company,
+                                "Web Address": job_url,
+                                "Platform": platform,
+                                "Found_job": target_role
+                            }
                             st.session_state['applied_jobs'] = db.save_applied(jid, job_data, {"auto_applied": True})
                         else:
                             results_log.append({"Job": title, "Company": company, "Status": "❌ Failed", "Message": message})
@@ -1689,6 +1698,7 @@ elif st.session_state['page'] == 'applied':
                 "Job Title": job_details.get("Job Title", jid.split('-')[0]),
                 "Company": job_details.get("Company", jid.split('-')[-1]),
                 "Platform": job_details.get("Platform", "Unknown"),
+                "Target Role": job_details.get("Found_job", "Unknown"),
                 "Location": job_details.get("Location", "Unknown"),
                 "Web Address": job_details.get("Web Address", "#"),
                 "Applied Date": data.get("created_at", "").split("T")[0],

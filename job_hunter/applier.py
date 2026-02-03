@@ -105,11 +105,12 @@ class JobApplier:
         print("[LinkedIn] ✗ Not Easy Apply (external apply required)")
         return False
     
-    def is_easy_apply_xing(self, job_url):
+    def is_easy_apply_xing(self, job_url=None):
         """Check if a Xing job has Easy Apply (not external redirect)."""
-        print(f"[Xing] Checking Easy Apply: {job_url}")
-        self.driver.get(job_url)
-        self.random_sleep(2, 4)
+        if job_url:
+            print(f"[Xing] Checking Easy Apply: {job_url}")
+            self.driver.get(job_url)
+            self.random_sleep(2, 4)
         
         # Keywords that indicate EASY APPLY (internal application)
         easy_apply_keywords = [
@@ -126,6 +127,7 @@ class JobApplier:
             "external",
             "website",
             "karriereseite",     # German: Career Site
+            "zur bewerbung beim arbeitgeber",
         ]
         
         # Look for apply buttons and check their text
@@ -134,7 +136,8 @@ class JobApplier:
             "a[data-testid='apply-button']",
             "button.apply-button",
             "a.apply-button",
-            "[data-testid='apply-button']"
+            "[data-testid='apply-button']",
+            "button[data-testid='nls-apply-button']",
         ]
         
         for selector in apply_selectors:
@@ -667,11 +670,12 @@ class JobApplier:
     # ==========================================
     # MAIN APPLY DISPATCHER
     # ==========================================
-    def apply(self, job_url, platform, skip_detection=False, job_title="", company=""):
+    def apply(self, job_url, platform, skip_detection=False, job_title="", company="", target_role=None):
         """Dispatch to the correct applier based on platform."""
         # Set current job info for logging unknown questions
         self.current_job_title = job_title
         self.current_company = company
+        self.target_role = target_role or job_title
         
         platform_lower = platform.lower()
         
@@ -685,7 +689,7 @@ class JobApplier:
     # ==========================================
     # LIVE APPLY MODE - LinkedIn
     # ==========================================
-    def live_apply_linkedin(self, keyword, location, target_count=5, callback=None):
+    def live_apply_linkedin(self, keyword, location, target_count=5, target_role=None, callback=None):
         """
         Browse LinkedIn job search and apply to jobs until target_count is reached.
         Workflow:
@@ -706,6 +710,10 @@ class JobApplier:
             "checked": 0
         }
         
+        # Set target_role if not provided
+        if not target_role:
+            target_role = keyword
+
         # Load filters
         blacklist = self.db.load_blacklist()
         bl_companies = [c.lower() for c in blacklist.get("companies", []) if c]
@@ -780,6 +788,16 @@ class JobApplier:
                 results["checked"] += 1
                 
                 try:
+                    # Quick check if already applied on card text
+                    try:
+                        card_text = card.text.lower()
+                        if "beworben" in card_text or "applied" in card_text:
+                            log(f"   ⏭️ Already applied (via card text)")
+                            results["skipped"].append({"title": "Unknown", "company": "Unknown", "reason": "Already applied"})
+                            continue
+                    except:
+                        pass
+
                     # Click card with retry for stale elements
                     card_clicked = False
                     for retry in range(3):
@@ -796,7 +814,11 @@ class JobApplier:
                             # Scroll card into view and click using JavaScript
                             self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", card)
                             self.random_sleep(0.3, 0.5)
-                            self.driver.execute_script("arguments[0].click();", card)
+                            # Try regular click first, then JS
+                            try:
+                                card.click()
+                            except:
+                                self.driver.execute_script("arguments[0].click();", card)
                             card_clicked = True
                             break
                         except StaleElementReferenceException:
@@ -832,14 +854,17 @@ class JobApplier:
                     
                     log(f"[{card_index}] {title} @ {company}")
                     
-                    # CHECK 1: Is "Beworben" (already applied) shown?
+                    # CHECK 1: Is "Beworben" (already applied) shown in the detail panel?
                     try:
-                        applied_badge = self.driver.find_element(By.XPATH, 
-                            "//*[contains(text(), 'Beworben') or contains(text(), 'Applied') or contains(@class, 'applied')]")
-                        if applied_badge:
-                            log(f"   ⏭️ Already applied (Beworben)")
-                            results["skipped"].append({"title": title, "company": company, "reason": "Already applied"})
-                            continue
+                        # Scope to detail panel to avoid finding other cards' badges
+                        detail_panel = self.find_element_safe(".jobs-search__job-details, .scaffold-layout__detail", timeout=3)
+                        if detail_panel:
+                            applied_badge = detail_panel.find_elements(By.XPATH,
+                                ".//*[contains(text(), 'Beworben') or contains(text(), 'Applied') or contains(@class, 'applied')]")
+                            if applied_badge:
+                                log(f"   ⏭️ Already applied (Beworben in details)")
+                                results["skipped"].append({"title": title, "company": company, "reason": "Already applied"})
+                                continue
                     except:
                         pass  # Not applied - good!
                     
@@ -948,7 +973,13 @@ class JobApplier:
                         # Save to applied jobs
                         jid = f"{title}-{company}"
                         job_url = self.driver.current_url
-                        job_data = {"Job Title": title, "Company": company, "Web Address": job_url, "Platform": "LinkedIn"}
+                        job_data = {
+                            "Job Title": title,
+                            "Company": company,
+                            "Web Address": job_url,
+                            "Platform": "LinkedIn",
+                            "Found_job": target_role
+                        }
                         self.db.save_applied(jid, job_data, {"auto_applied": True})
                         
                         # After successful application, wait a bit for DOM to stabilize
@@ -1159,7 +1190,7 @@ class JobApplier:
     # ==========================================
     # LIVE APPLY MODE - Xing
     # ==========================================
-    def live_apply_xing(self, keyword, location, target_count=5, callback=None):
+    def live_apply_xing(self, keyword, location, target_count=5, target_role=None, callback=None):
         """
         Browse Xing job search and apply to jobs until target_count is reached.
         Xing has no Easy Apply filter, so we check each job individually.
@@ -1168,6 +1199,7 @@ class JobApplier:
             keyword: Job search keyword
             location: Location to search
             target_count: Number of successful applications to make
+            target_role: The role name this application is for
             callback: Optional function to call with status updates
         
         Returns:
@@ -1180,6 +1212,9 @@ class JobApplier:
             "checked": 0
         }
         
+        if not target_role:
+            target_role = keyword
+
         # Load filters
         applied_jobs = self.db.load_applied()
         applied_links = set()
@@ -1243,6 +1278,8 @@ class JobApplier:
                 log("No job cards found")
                 break
             
+            search_handle = self.driver.current_window_handle
+
             for idx, card in enumerate(job_cards):
                 if self.applied_count >= target_count:
                     break
@@ -1260,8 +1297,10 @@ class JobApplier:
                     if not job_url:
                         continue
                     
-                    # Navigate to job page
-                    self.driver.get(job_url)
+                    # Open in new tab
+                    self.driver.execute_script(f"window.open('{job_url}', '_blank');")
+                    self.random_sleep(1, 2)
+                    self.driver.switch_to.window(self.driver.window_handles[-1])
                     self.random_sleep(2, 3)
                     
                     current_url = self.driver.current_url
@@ -1285,16 +1324,16 @@ class JobApplier:
                     if current_url in applied_links:
                         log(f"   ⏭️ Already applied - skipping")
                         results["skipped"].append({"title": title, "company": company, "reason": "Already applied"})
-                        self.driver.get(search_url)
-                        self.random_sleep(1, 2)
+                        self.driver.close()
+                        self.driver.switch_to.window(search_handle)
                         continue
                     
                     # Check if parked
                     if current_url in parked_links:
                         log(f"   ⏭️ In parked jobs - skipping")
                         results["skipped"].append({"title": title, "company": company, "reason": "Parked"})
-                        self.driver.get(search_url)
-                        self.random_sleep(1, 2)
+                        self.driver.close()
+                        self.driver.switch_to.window(search_handle)
                         continue
                     
                     # Check blacklist
@@ -1302,18 +1341,18 @@ class JobApplier:
                     if is_blocked:
                         log(f"   ⏭️ Blacklisted: {reason}")
                         results["skipped"].append({"title": title, "company": company, "reason": reason})
-                        self.driver.get(search_url)
-                        self.random_sleep(1, 2)
+                        self.driver.close()
+                        self.driver.switch_to.window(search_handle)
                         continue
                     
                     # Check if this is Easy Apply (no external redirect)
-                    is_easy = self.is_easy_apply_xing(current_url)
+                    is_easy = self.is_easy_apply_xing()
                     
                     if not is_easy:
                         log(f"   ⏭️ Not Easy Apply - external application required")
                         results["skipped"].append({"title": title, "company": company, "reason": "Not Easy Apply"})
-                        self.driver.get(search_url)
-                        self.random_sleep(1, 2)
+                        self.driver.close()
+                        self.driver.switch_to.window(search_handle)
                         continue
                     
                     # Try to apply
@@ -1329,21 +1368,30 @@ class JobApplier:
                         applied_links.add(current_url)
                         
                         jid = f"{title}-{company}"
-                        job_data = {"Job Title": title, "Company": company, "Web Address": current_url, "Platform": "Xing"}
+                        job_data = {
+                            "Job Title": title,
+                            "Company": company,
+                            "Web Address": current_url,
+                            "Platform": "Xing",
+                            "Found_job": target_role
+                        }
                         self.db.save_applied(jid, job_data, {"auto_applied": True})
                     else:
                         log(f"   ❌ Failed: {message}")
                         results["errors"].append({"title": title, "company": company, "error": message})
                     
-                    # Navigate back
-                    self.driver.get(search_url)
-                    self.random_sleep(2, 3)
+                    # Close tab and switch back
+                    self.driver.close()
+                    self.driver.switch_to.window(search_handle)
+                    self.random_sleep(1, 2)
                     
                 except Exception as e:
                     log(f"   ⚠️ Error processing card: {e}")
                     results["errors"].append({"error": str(e)})
-                    self.driver.get(search_url)
-                    self.random_sleep(1, 2)
+                    # Make sure to close tab and switch back even on error
+                    if len(self.driver.window_handles) > 1:
+                        self.driver.close()
+                    self.driver.switch_to.window(search_handle)
                     continue
             
             # Next page
