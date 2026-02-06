@@ -30,6 +30,7 @@ class JobApplier:
         self.db = DataManager()  # For question-answer config
         self.current_job_title = ""  # For logging unknown questions
         self.current_company = ""
+        self.session_unknown_questions = []  # Track unknown questions for user prompt
     
     def random_sleep(self, min_sec=2, max_sec=5):
         time.sleep(random.uniform(min_sec, max_sec))
@@ -469,9 +470,48 @@ class JobApplier:
                             except:
                                 pass
                         else:
-                            # Log as unknown question
-                            print(f"[LinkedIn] ❓ Unknown question: '{label_text}'")
-                            self.db.log_unknown_question(label_text, self.current_job_title, self.current_company)
+                            # Interactive mode: Alert user and wait for them to fill the field
+                            print(f"[LinkedIn] 🔔 UNKNOWN QUESTION: '{label_text}'")
+                            print(f"[LinkedIn] ⏳ Please fill this field on LinkedIn. Bot will capture your answer...")
+                            
+                            # Play a sound to alert the user
+                            try:
+                                import winsound
+                                winsound.Beep(1000, 500)  # 1000 Hz for 500ms
+                            except:
+                                print('\a')  # Fallback terminal beep
+                            
+                            # Wait for user to fill the field (poll every 2 seconds, max 60 seconds)
+                            max_wait = 60
+                            poll_interval = 2
+                            waited = 0
+                            user_answer = None
+                            
+                            while waited < max_wait:
+                                try:
+                                    current_value = input_el.get_attribute("value")
+                                    if current_value and current_value.strip():
+                                        user_answer = current_value.strip()
+                                        print(f"[LinkedIn] ✅ Captured answer: '{user_answer}'")
+                                        
+                                        # Save to Q&A config automatically
+                                        self.db.save_qa_answer(label_text, user_answer)
+                                        print(f"[LinkedIn] 💾 Saved Q&A: '{label_text}' → '{user_answer}'")
+                                        break
+                                except StaleElementReferenceException:
+                                    break  # Element gone, page changed
+                                except:
+                                    pass
+                                
+                                time.sleep(poll_interval)
+                                waited += poll_interval
+                            
+                            if not user_answer:
+                                print(f"[LinkedIn] ⚠️ No answer provided, logging as unknown...")
+                                self.db.log_unknown_question(label_text, self.current_job_title, self.current_company)
+                                q_entry = {"question": label_text, "type": "text", "job": self.current_job_title}
+                                if q_entry not in self.session_unknown_questions:
+                                    self.session_unknown_questions.append(q_entry)
                 except:
                     continue
         except:
@@ -1084,17 +1124,21 @@ class JobApplier:
                         log(f"   ✅ Applied! ({applied_count}/{target_count})")
                         results["applied"].append({"title": title, "company": company})
                         
-                        # Save to applied jobs
+                        # Save to applied jobs with timestamp
                         jid = f"{title}-{company}"
                         job_url = self.driver.current_url
+                        from datetime import datetime
                         job_data = {
                             "Job Title": title,
                             "Company": company,
                             "Web Address": job_url,
                             "Platform": "LinkedIn",
-                            "Found_job": target_role
+                            "Found_job": target_role,
+                            "Location": location,
+                            "created_at": datetime.now().isoformat()
                         }
                         self.db.save_applied(jid, job_data, {"auto_applied": True})
+                        log(f"   💾 Saved to database: {jid}")
                         
                         # After successful application, wait a bit for DOM to stabilize
                         self.random_sleep(2, 3)
@@ -1125,6 +1169,10 @@ class JobApplier:
                     break
         
         log(f"🏁 Complete! Applied: {applied_count} | Checked: {results['checked']} | Skipped: {len(results['skipped'])}")
+        
+        # Include unknown questions for user to answer
+        results["unknown_questions"] = self.session_unknown_questions
+        
         return results
     
     def _process_linkedin_modal(self):
@@ -1133,7 +1181,16 @@ class JobApplier:
         Based on EAB patterns: loop until submit button text found, use primary button class.
         """
         max_steps = 15
-        submit_texts = ['submit application', 'bewerbung senden', 'absenden']
+        # German + English submit button texts
+        submit_texts = [
+            'submit application', 'bewerbung senden', 'absenden', 
+            'submit', 'senden', 'abschicken', 'bewerben'
+        ]
+        # German + English next/continue button texts (for recognition, not action)
+        next_button_texts = [
+            'next', 'weiter', 'further', 'continue', 'fortfahren',
+            'review', 'überprüfen', 'prüfen', 'nächster', 'nächste'
+        ]
         had_errors = False  # Track if we encountered errors
         consecutive_errors = 0  # Track consecutive validation errors
         last_step_with_error = -1
@@ -1147,7 +1204,11 @@ class JobApplier:
                     "//*[contains(text(), 'Bewerbung gesendet')]",
                     "//*[contains(text(), 'Application sent')]",
                     "//*[contains(text(), 'successfully submitted')]",
-                    "//*[contains(text(), 'erfolgreich')]"
+                    "//*[contains(text(), 'erfolgreich')]",
+                    "//*[contains(text(), 'Bewerbung wurde gesendet')]",
+                    "//*[contains(text(), 'Ihre Bewerbung')]",
+                    "//*[contains(text(), 'Your application')]",
+                    "//*[contains(text(), 'wurde übermittelt')]"
                 ]
                 for xpath in success_indicators:
                     try:

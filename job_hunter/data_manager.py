@@ -519,6 +519,18 @@ class DataManager:
         
         return None  # No match found
     
+    def save_qa_answer(self, question_text, answer):
+        """Save a question-answer pair to the bot config.
+        
+        This is called when the user manually fills in a field and the bot captures the answer.
+        The question is normalized (lowercase) for matching.
+        """
+        config = self.load_bot_config()
+        q_lower = question_text.lower().strip()
+        config["answers"][q_lower] = answer
+        self.save_bot_config(config)
+        return True
+    
     # ==========================================
     # RESUME TITLE HISTORY
     # ==========================================

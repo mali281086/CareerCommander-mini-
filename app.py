@@ -94,22 +94,34 @@ def render_metrics_dashboard(current_df, applied_dict, parked_count=0):
 
     # --- 2. CONTROLS (Toggle Only) ---
     c_view, _ = st.columns([1, 4])
-    view_by = c_view.radio("View Charts By:", ["Target Role", "Platform"], horizontal=True, label_visibility="collapsed")
-    group_col = "Found_job" if view_by == "Target Role" else "Platform"
+    view_by = c_view.radio("View Charts By:", ["Target Role", "Platform", "Language"], horizontal=True, label_visibility="collapsed")
+    
+    if view_by == "Target Role":
+        group_col = "Found_job"
+    elif view_by == "Platform":
+        group_col = "Platform"
+    else:
+        group_col = "Language"
 
     # --- 3. PIE CHARTS ---
     st.markdown("##### Distribution")
     
+    # Check if selected column exists in dataframes
+    current_has_col = group_col in current_df.columns if not current_df.empty else False
+    applied_has_col = group_col in applied_df.columns if not applied_df.empty else False
+    
     # Prepare Data
-    if not current_df.empty:
+    if not current_df.empty and current_has_col:
         curr_counts = current_df[group_col].fillna("Unknown").value_counts().reset_index()
         curr_counts.columns = ['Label', 'Count']
-    else: curr_counts = pd.DataFrame(columns=['Label', 'Count'])
+    else: 
+        curr_counts = pd.DataFrame(columns=['Label', 'Count'])
     
-    if not applied_df.empty:
+    if not applied_df.empty and applied_has_col:
         app_counts = applied_df[group_col].fillna("Unknown").value_counts().reset_index()
         app_counts.columns = ['Label', 'Count']
-    else: app_counts = pd.DataFrame(columns=['Label', 'Count'])
+    else: 
+        app_counts = pd.DataFrame(columns=['Label', 'Count'])
 
     c_chart1, c_chart2 = st.columns(2)
     
@@ -132,7 +144,10 @@ def render_metrics_dashboard(current_df, applied_dict, parked_count=0):
             )
             st.altair_chart(pie + text, width="stretch")
         else:
-            st.info("No data.")
+            if view_by == "Language":
+                st.info("No language data. Run 'Fetch Complete Details' first.")
+            else:
+                st.info("No data.")
 
     # Chart 2: Applied
     with c_chart2:
@@ -153,7 +168,10 @@ def render_metrics_dashboard(current_df, applied_dict, parked_count=0):
             )
             st.altair_chart(pie + text, width="stretch")
         else:
-            st.info("No data.")
+            if view_by == "Language":
+                st.info("No language data available.")
+            else:
+                st.info("No data.")
             
     # --- 4. STACKED BAR CHART (Timeline) ---
     st.markdown(f"##### Application Timeline (Total: {count_applied})")
@@ -704,8 +722,20 @@ if st.session_state['page'] == 'home':
                                     except Exception as e:
                                         st.error(f"Xing error: {e}")
                     
+                    # Collect all unknown questions from the session
+                    all_unknown = applier.session_unknown_questions if hasattr(applier, 'session_unknown_questions') else []
+                    
                     applier.close()
                     status_box.success(f"🎉 Live Apply Complete! Total Applied: {session_total_applied} | Skipped: {total_skipped} | Errors: {total_errors}")
+                    
+                    # Display unknown questions if any
+                    if all_unknown:
+                        st.warning(f"⚠️ **{len(all_unknown)} Unknown Questions** encountered during this session:")
+                        for q in all_unknown[:10]:  # Show max 10
+                            st.caption(f"- {q.get('question', 'Unknown')} (on job: {q.get('job', 'N/A')})")
+                        if len(all_unknown) > 10:
+                            st.caption(f"...and {len(all_unknown) - 10} more")
+                        st.info("💡 **Tip:** Go to **Bot Settings** → **Question & Answer Config** to add answers for these questions.")
                 
                 else:
                     # STANDARD SCRAPE MODE
@@ -791,7 +821,6 @@ elif st.session_state['page'] == 'explorer':
                  s_list = [s.strip() for s in new_safe.split(';') if s.strip()]
                  db.save_blacklist(c_list, t_list, s_list)
                  st.toast("Blacklist Updated! 🛡️")
-
 
         # Pre-calculate filtered for logic (no filters really, just load)
         filtered = df.copy()
@@ -977,8 +1006,10 @@ elif st.session_state['page'] == 'explorer':
                 filter_col = c_col.selectbox("Column", filterable_cols, key="filter_column")
                 filter_term = c_search.text_input("Contains", placeholder="Type to filter...", key="filter_term")
                 
-                if c_clear.button("🔄 Clear", use_container_width=True):
-                    st.session_state["filter_term"] = ""
+                def clear_filter():
+                    del st.session_state["filter_term"]
+                
+                if c_clear.button("🔄 Clear", use_container_width=True, on_click=clear_filter):
                     st.rerun()
                 
                 # Apply filter
