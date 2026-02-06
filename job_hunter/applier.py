@@ -807,7 +807,8 @@ class JobApplier:
             "applied": [],
             "skipped": [],
             "errors": [],
-            "checked": 0
+            "checked": 0,
+            "all_found": [] # To save details like scraping
         }
         
         # Set target_role if not provided
@@ -959,6 +960,19 @@ class JobApplier:
                     
                     log(f"[{card_index}] {title} @ {company}")
                     
+                    # Track this job regardless of apply status (for Flaw 4)
+                    job_url = self.driver.current_url
+                    if "?" in job_url: job_url = job_url.split("?")[0]
+                    current_job_record = {
+                        "title": title,
+                        "company": company,
+                        "location": location,
+                        "link": job_url,
+                        "platform": "LinkedIn",
+                        "Found_job": target_role
+                    }
+                    results["all_found"].append(current_job_record)
+
                     # CHECK 1: Is "Beworben" (already applied) shown in the detail panel?
                     try:
                         # Scope to detail panel to avoid finding other cards' badges
@@ -1325,7 +1339,8 @@ class JobApplier:
             "applied": [],
             "skipped": [],
             "errors": [],
-            "checked": 0
+            "checked": 0,
+            "all_found": [] # To save details like scraping
         }
         
         if not target_role:
@@ -1441,6 +1456,19 @@ class JobApplier:
                     
                     log(f"[{idx+1}/{len(job_cards)}] Checking: {title} @ {company}")
                     
+                    # Track this job regardless of apply status (for Flaw 4)
+                    link_to_save = current_url
+                    if "?" in link_to_save: link_to_save = link_to_save.split("?")[0]
+                    current_job_record = {
+                        "title": title,
+                        "company": company,
+                        "location": location,
+                        "link": link_to_save,
+                        "platform": "Xing",
+                        "Found_job": target_role
+                    }
+                    results["all_found"].append(current_job_record)
+
                     # Check if already applied (via DB)
                     if current_url in applied_links:
                         log(f"   ⏭️ Already applied (DB) - skipping")

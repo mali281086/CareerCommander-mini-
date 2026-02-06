@@ -555,7 +555,10 @@ if st.session_state['page'] == 'home':
                                 prev_titles = db.load_resume_title_history(data['filename'])
                                 if prev_titles:
                                     # Join titles with semicolons
-                                    st.session_state['resumes'][role_key]['target_keywords'] = "; ".join(prev_titles)
+                                    combined = "; ".join(prev_titles)
+                                    st.session_state['resumes'][role_key]['target_keywords'] = combined
+                                    # Update widget state directly to ensure it reflects in UI
+                                    st.session_state[f"kw_{unique_key}"] = combined
                                     save_resume_config()
                                     st.toast(f"Loaded {len(prev_titles)} previous titles!")
                                     st.rerun()
@@ -629,6 +632,9 @@ if st.session_state['page'] == 'home':
                     total_skipped = 0
                     total_errors = 0
                     
+                    # To save details of all found/applied jobs
+                    all_live_jobs = []
+
                     for role_name, resume_data in st.session_state['resumes'].items():
                         # Use target_keywords (same as standard scrape mode)
                         raw_kw = resume_data.get("target_keywords", "")
@@ -650,59 +656,50 @@ if st.session_state['page'] == 'home':
                             locations = ["Germany"]
                         
                         for kw in keywords:
-                            # Tracking per keyword across all locations
-                            kw_applied = 0
+                            # TRACKING PER PLATFORM for each keyword as requested
+                            for platform in selected_platforms:
+                                platform_applied = 0
+                                for loc in locations:
+                                    if platform_applied >= scrape_limit:
+                                        break
 
-                            for loc in locations:
-                                # Break loc loop if keyword limit reached
-                                if kw_applied >= scrape_limit:
-                                    break
-                                    
-                                remaining_for_kw = scrape_limit - kw_applied
-                                
-                                # LinkedIn Live Apply
-                                status_box.info(f"🔍 [LinkedIn] '{kw}' in '{loc}' (Need {remaining_for_kw} more for this title)...")
-                                
-                                try:
-                                    results = applier.live_apply_linkedin(
-                                        keyword=kw,
-                                        location=loc,
-                                        target_count=remaining_for_kw,
-                                        target_role=kw
-                                    )
-                                    
-                                    applied_now = len(results.get("applied", []))
-                                    kw_applied += applied_now
-                                    session_total_applied += applied_now
-                                    total_skipped += len(results.get("skipped", []))
-                                    total_errors += len(results.get("errors", []))
-                                    st.session_state['applied_jobs'] = db.load_applied()
-                                    
-                                except Exception as e:
-                                    st.error(f"LinkedIn error: {e}")
-                                
-                                # Xing Live Apply (if still need more for THIS keyword)
-                                if kw_applied < scrape_limit:
-                                    remaining_for_kw = scrape_limit - kw_applied
-                                    status_box.info(f"🔍 [Xing] '{kw}' in '{loc}' (Need {remaining_for_kw} more for this title)...")
+                                    needed = scrape_limit - platform_applied
+                                    status_box.info(f"🔍 [{platform}] '{kw}' in '{loc}' (Need {needed} more for this title)...")
                                     
                                     try:
-                                        results = applier.live_apply_xing(
-                                            keyword=kw,
-                                            location=loc,
-                                            target_count=remaining_for_kw,
-                                            target_role=kw
-                                        )
+                                        if platform == "LinkedIn":
+                                            results = applier.live_apply_linkedin(
+                                                keyword=kw,
+                                                location=loc,
+                                                target_count=needed,
+                                                target_role=kw
+                                            )
+                                        else:
+                                            results = applier.live_apply_xing(
+                                                keyword=kw,
+                                                location=loc,
+                                                target_count=needed,
+                                                target_role=kw
+                                            )
                                         
                                         applied_now = len(results.get("applied", []))
-                                        kw_applied += applied_now
+                                        platform_applied += applied_now
                                         session_total_applied += applied_now
                                         total_skipped += len(results.get("skipped", []))
                                         total_errors += len(results.get("errors", []))
+
+                                        # Track all found jobs for saving to scouted DB later
+                                        # (Both applied and skipped if they have details)
+                                        all_live_jobs.extend(results.get("all_found", []))
+
                                         st.session_state['applied_jobs'] = db.load_applied()
                                         
                                     except Exception as e:
-                                        st.error(f"Xing error: {e}")
+                                        st.error(f"{platform} error: {e}")
+
+                    # Save all live-found jobs to scouted database just like standard scrape
+                    if all_live_jobs:
+                        db.save_scouted_jobs(all_live_jobs, append=True, skip_applied_filter=True)
                     
                     applier.close()
                     status_box.success(f"🎉 Live Apply Complete! Total Applied: {session_total_applied} | Skipped: {total_skipped} | Errors: {total_errors}")
@@ -720,6 +717,9 @@ if st.session_state['page'] == 'home':
                         keywords = [k.strip() for k in raw_kw.split(';') if k.strip()]
                         if not keywords: keywords = [role_name]
                         
+                        # Save titles to history for this resume (Standard Scrape Mode)
+                        db.save_resume_title_history(role_data.get("filename", role_name), keywords)
+
                         locations = [l.strip() for l in scrape_location.split(';') if l.strip()]
                         if not locations: locations = ["Germany"]
 

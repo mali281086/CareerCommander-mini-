@@ -69,7 +69,7 @@ class DataManager:
             with open(SCOUTED_FILE, "r", encoding="utf-8") as f: return json.load(f)
         except: return []
 
-    def save_scouted_jobs(self, jobs_list, append=False):
+    def save_scouted_jobs(self, jobs_list, append=False, skip_applied_filter=False):
         """
         Saves a list of job dictionaries.
         If append is True, adds to existing.
@@ -170,8 +170,9 @@ class DataManager:
              jid = f"{j_title}-{j_company}" # Normalization happens in app logic mostly, but here we construct ID
              j_link = job.get('link')
 
-             if jid in applied_ids: continue
-             if j_link and j_link in applied_links: continue
+             if not skip_applied_filter:
+                 if jid in applied_ids: continue
+                 if j_link and j_link in applied_links: continue
              
              if jid in parked_ids: continue
              if j_link and j_link in parked_links: continue
