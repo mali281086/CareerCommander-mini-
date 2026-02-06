@@ -17,7 +17,8 @@ class JobApplier:
         "già candidato", "aanmelding verzonden", "zaplikowano",
         "candidatado", "already applied", "du hast dich beworben",
         "application submitted", "candidature envoyée", "votre candidature a été envoyée",
-        "solicitud confirmada", "candidatura inviata"
+        "solicitud confirmada", "candidatura inviata",
+        "you've applied", "you applied", "sie haben sich beworben", "postulée"
     ]
 
     def __init__(self, resume_path=None, phone_number=None):
@@ -140,7 +141,10 @@ class JobApplier:
             "karriereseite",     # German: Career Site
             "zur bewerbung beim arbeitgeber",
             "apply on company site",
-            "auf der seite des arbeitgebers bewerben"
+            "auf der seite des arbeitgebers bewerben",
+            "zum arbeitgeber",
+            "arbeitgeber-website",
+            "unternehmenswebsite"
         ]
         
         # Look for apply buttons and check their text
@@ -336,6 +340,8 @@ class JobApplier:
                 close_btn = self.find_element_safe("button[aria-label='Dismiss']", timeout=2)
                 if close_btn:
                     close_btn.click()
+                    self.random_sleep(1, 2)
+                    self._handle_linkedin_discard_confirmation()
                     return False, "Got stuck. Modal dismissed.", True
                     
                 # Maybe application was already submitted?
@@ -346,6 +352,41 @@ class JobApplier:
         
         return False, "Exceeded max steps. Check manually.", True
     
+    def _handle_linkedin_discard_confirmation(self):
+        """Check for 'Discard application?' modal and click Discard."""
+        try:
+            # Look for buttons like "Discard" or "Verwerfen"
+            discard_selectors = [
+                "button[data-control-name='discard_application_confirm_btn']",
+                "button.artdeco-modal__confirm-dialog-btn",
+                "button[data-test-dialog-secondary-btn]",
+                "//button[contains(., 'Verwerfen')]",
+                "//button[contains(., 'Discard')]",
+                "//span[contains(., 'Verwerfen')]/..",
+                "//button[contains(@class, 'artdeco-button') and contains(., 'Verwerfen')]"
+            ]
+            for sel in discard_selectors:
+                try:
+                    if sel.startswith("//"):
+                        btn = self.driver.find_element(By.XPATH, sel)
+                    else:
+                        btn = self.driver.find_element(By.CSS_SELECTOR, sel)
+
+                    if btn.is_displayed():
+                        # Try clicking directly, then with JS
+                        try:
+                            btn.click()
+                        except:
+                            self.driver.execute_script("arguments[0].click();", btn)
+                        print("[LinkedIn] Clicked Discard confirmation button")
+                        self.random_sleep(1, 2)
+                        return True
+                except:
+                    continue
+        except:
+            pass
+        return False
+
     def _linkedin_fill_fields(self):
         """Fill common fields in LinkedIn Easy Apply modal with smart question detection."""
         
@@ -372,10 +413,20 @@ class JobApplier:
             for group in form_groups:
                 try:
                     # Find label
-                    label_el = group.find_element(By.CSS_SELECTOR, "label, .fb-dash-form-element__label, span.t-bold")
-                    label_text = label_el.text.strip()
+                    label_selectors = [
+                        "label", ".fb-dash-form-element__label", "span.t-bold",
+                        ".jobs-easy-apply-form-element__label", "legend",
+                        ".fb-dash-form-element__label-text"
+                    ]
+                    label_text = ""
+                    for sel in label_selectors:
+                        try:
+                            label_el = group.find_element(By.CSS_SELECTOR, sel)
+                            label_text = label_el.text.strip()
+                            if label_text: break
+                        except: continue
                     
-                    if not label_text or len(label_text) < 3:
+                    if not label_text or len(label_text) < 2:
                         continue
                     
                     # Find input
@@ -816,6 +867,9 @@ class JobApplier:
             target_role = keyword
 
         # Load filters
+        applied_jobs = self.db.load_applied()
+        applied_ids = set(applied_jobs.keys())
+
         blacklist = self.db.load_blacklist()
         bl_companies = [c.lower() for c in blacklist.get("companies", []) if c]
         bl_titles = [t.lower() for t in blacklist.get("titles", []) if t]
@@ -959,6 +1013,13 @@ class JobApplier:
                     processed_jobs.add(job_key)
                     
                     log(f"[{card_index}] {title} @ {company}")
+
+                    # CHECK 0: Already in applied DB?
+                    jid = f"{title}-{company}"
+                    if jid in applied_ids:
+                        log(f"   ⏭️ Already in applied DB - skipping")
+                        results["skipped"].append({"title": title, "company": company, "reason": "In DB"})
+                        continue
                     
                     # Track this job regardless of apply status (for Flaw 4)
                     job_url = self.driver.current_url
@@ -1200,6 +1261,9 @@ class JobApplier:
                     print("[LinkedIn] Modal closed, assuming success")
                     return True
             
+            # Check for and handle the "Save application?" confirmation dialog if it popped up
+            self._handle_linkedin_discard_confirmation()
+
             # Fill form fields on current page
             self._linkedin_fill_fields()
             
@@ -1290,13 +1354,8 @@ class JobApplier:
                     try:
                         dismiss = self.driver.find_element(By.CLASS_NAME, 'artdeco-modal__dismiss')
                         dismiss.click()
-                        self.random_sleep(0.5, 1.0)
-                        try:
-                            confirm = self.driver.find_elements(By.CLASS_NAME, 'artdeco-modal__confirm-dialog-btn')
-                            if confirm:
-                                confirm[0].click()
-                        except:
-                            pass
+                        self.random_sleep(1.0, 2.0)
+                        self._handle_linkedin_discard_confirmation()
                         return False
                     except:
                         pass
@@ -1305,14 +1364,8 @@ class JobApplier:
         print("[LinkedIn] ⚠️ Max steps reached or errors, dismissing modal")
         try:
             self.driver.find_element(By.CLASS_NAME, 'artdeco-modal__dismiss').click()
-            self.random_sleep(0.5, 1.0)
-            # Click confirm if discard dialog appears
-            try:
-                confirm = self.driver.find_elements(By.CLASS_NAME, 'artdeco-modal__confirm-dialog-btn')
-                if confirm:
-                    confirm[0].click()
-            except:
-                pass
+            self.random_sleep(1.5, 2.5)
+            self._handle_linkedin_discard_confirmation()
         except:
             pass
         return False
@@ -1470,7 +1523,8 @@ class JobApplier:
                     results["all_found"].append(current_job_record)
 
                     # Check if already applied (via DB)
-                    if current_url in applied_links:
+                    jid = f"{title}-{company}"
+                    if jid in applied_jobs or current_url in applied_links:
                         log(f"   ⏭️ Already applied (DB) - skipping")
                         results["skipped"].append({"title": title, "company": company, "reason": "Already applied"})
                         self.driver.close()
