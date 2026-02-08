@@ -76,6 +76,16 @@ class LinkedInScraper(BaseScraper):
                         # Clean link (remove query params for storage)
                         if "?" in link: link = link.split("?")[0]
                         
+                        # Check for Easy Apply Badge
+                        is_easy = False
+                        try:
+                            # Easy Apply often has a specific badge or text on the card
+                            badge = card.find_element(By.CSS_SELECTOR, ".job-card-container__apply-method, .job-card-list__footer-item")
+                            if "Easy Apply" in badge.text or "Einfach bewerben" in badge.text:
+                                is_easy = True
+                        except:
+                            if easy_apply: is_easy = True # Fallback if filter was on
+
                         # Dedup check in local list
                         if not any(j['link'] == link for j in results):
                             results.append({
@@ -83,7 +93,8 @@ class LinkedInScraper(BaseScraper):
                                 "company": company,
                                 "location": location, # Default to search loc if specific element missing
                                 "link": link,
-                                "platform": "LinkedIn"
+                                "platform": "LinkedIn",
+                                "is_easy_apply": is_easy
                             })
                             jobs_found_on_page += 1
                     except Exception as e:

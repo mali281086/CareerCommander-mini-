@@ -101,7 +101,8 @@ class StepstoneScraper(BaseScraper):
                             "company": company,
                             "location": location,
                             "link": link,
-                            "platform": "Stepstone"
+                            "platform": "Stepstone",
+                            "is_easy_apply": False # Default for Stepstone
                         })
                 except: continue
             

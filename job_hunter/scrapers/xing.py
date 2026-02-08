@@ -100,7 +100,8 @@ class XingScraper(BaseScraper):
                             "company": company,
                             "location": location,
                             "link": href,
-                            "platform": "Xing"
+                            "platform": "Xing",
+                            "is_easy_apply": False # Default
                         })
                 except: continue
             
@@ -129,9 +130,11 @@ class XingScraper(BaseScraper):
                     # "easy apply" might appear in English interface
                     if "schnellbewerbung" in page_source or "easy apply" in page_source:
                         print(f"      ✅ Found Easy Apply!")
+                        job["is_easy_apply"] = True
                         easy_apply_results.append(job)
                     else:
                         print(f"      ❌ Standard Apply only.")
+                        job["is_easy_apply"] = False
                         
                 except Exception as e:
                     print(f"      ⚠️ Error checking job: {e}")

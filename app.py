@@ -323,6 +323,14 @@ with st.sidebar:
     st.session_state['api_provider'] = "Google Gemini"
 
     st.divider()
+    st.markdown("### 🌐 Browser LLM Settings")
+    st.caption("Used for heavy analysis (Intel, Cover Letter, ATS, Resume)")
+    browser_provider = st.selectbox("Browser LLM Provider", ["ChatGPT", "Gemini", "Copilot"], index=0)
+    os.environ["BROWSER_LLM_PROVIDER"] = browser_provider
+
+    use_browser_analysis = st.toggle("Use Browser for Analysis", value=True, help="Bypasses API to save quota. Opens a browser tab.")
+
+    st.divider()
     
     # --- NAVIGATION ---
     st.markdown("#### Pages for navigation")
@@ -444,7 +452,8 @@ def load_data():
         "platform": "Platform",
         "description": "Job Description",
         "rich_description": "Rich Description",
-        "language": "Language"
+        "language": "Language",
+        "is_easy_apply": "Easy Apply"
     }
     df = df.rename(columns=rename_map)
     
@@ -453,10 +462,17 @@ def load_data():
     df = df.drop(columns=[c for c in cols_to_drop if c in df.columns], errors='ignore')
     
     # Ensure required columns exist
-    required = ["Job Title", "Company", "Location", "Web Address", "Platform", "Found_job"]
+    required = ["Job Title", "Company", "Location", "Web Address", "Platform", "Found_job", "Easy Apply"]
     for col in required:
         if col not in df.columns:
-            df[col] = "Unknown"
+            if col == "Easy Apply":
+                df[col] = False
+            else:
+                df[col] = "Unknown"
+
+    # Ensure Easy Apply is boolean
+    if "Easy Apply" in df.columns:
+        df["Easy Apply"] = df["Easy Apply"].apply(lambda x: True if x is True or str(x).lower() == 'true' else False)
             
     return df
 
@@ -573,7 +589,10 @@ if st.session_state['page'] == 'home':
                                 prev_titles = db.load_resume_title_history(data['filename'])
                                 if prev_titles:
                                     # Join titles with semicolons
-                                    st.session_state['resumes'][role_key]['target_keywords'] = "; ".join(prev_titles)
+                                    new_kw_str = "; ".join(prev_titles)
+                                    st.session_state['resumes'][role_key]['target_keywords'] = new_kw_str
+                                    # Update the widget state directly to ensure UI reflects change
+                                    st.session_state[f"kw_{unique_key}"] = new_kw_str
                                     save_resume_config()
                                     st.toast(f"Loaded {len(prev_titles)} previous titles!")
                                     st.rerun()
@@ -602,8 +621,9 @@ if st.session_state['page'] == 'home':
         
         scrape_limit = c2.number_input("Limit per Role & Platform", value=30, step=10, min_value=1, max_value=5000)
         
-        c_easy, _ = st.columns([1, 1])
+        c_easy, c_deep = st.columns([1, 1])
         easy_apply_only = c_easy.toggle("✨ Easy Apply Only", value=False, help="Live Apply Mode: Browse & Apply until limit reached")
+        deep_scrape_toggle = c_deep.toggle("🕵️ Deep Scrape JDs", value=False, help="Fetch full Job Description during scraping. (Slower but better analysis)")
         
         if easy_apply_only:
              platforms = ["LinkedIn", "Xing"]
@@ -668,29 +688,19 @@ if st.session_state['page'] == 'home':
                             locations = ["Germany"]
                         
                         for kw in keywords:
-                            # Tracking per keyword across all locations
-                            kw_applied = 0
-
                             for loc in locations:
-                                # Break loc loop if keyword limit reached
-                                if kw_applied >= scrape_limit:
-                                    break
-                                    
-                                remaining_for_kw = scrape_limit - kw_applied
-                                
                                 # LinkedIn Live Apply
-                                status_box.info(f"🔍 [LinkedIn] '{kw}' in '{loc}' (Need {remaining_for_kw} more for this title)...")
+                                status_box.info(f"🔍 [LinkedIn] '{kw}' in '{loc}' (Target: {scrape_limit})...")
                                 
                                 try:
                                     results = applier.live_apply_linkedin(
                                         keyword=kw,
                                         location=loc,
-                                        target_count=remaining_for_kw,
+                                        target_count=scrape_limit,
                                         target_role=kw
                                     )
                                     
                                     applied_now = len(results.get("applied", []))
-                                    kw_applied += applied_now
                                     session_total_applied += applied_now
                                     total_skipped += len(results.get("skipped", []))
                                     total_errors += len(results.get("errors", []))
@@ -699,28 +709,25 @@ if st.session_state['page'] == 'home':
                                 except Exception as e:
                                     st.error(f"LinkedIn error: {e}")
                                 
-                                # Xing Live Apply (if still need more for THIS keyword)
-                                if kw_applied < scrape_limit:
-                                    remaining_for_kw = scrape_limit - kw_applied
-                                    status_box.info(f"🔍 [Xing] '{kw}' in '{loc}' (Need {remaining_for_kw} more for this title)...")
+                                # Xing Live Apply
+                                status_box.info(f"🔍 [Xing] '{kw}' in '{loc}' (Target: {scrape_limit})...")
+
+                                try:
+                                    results = applier.live_apply_xing(
+                                        keyword=kw,
+                                        location=loc,
+                                        target_count=scrape_limit,
+                                        target_role=kw
+                                    )
                                     
-                                    try:
-                                        results = applier.live_apply_xing(
-                                            keyword=kw,
-                                            location=loc,
-                                            target_count=remaining_for_kw,
-                                            target_role=kw
-                                        )
-                                        
-                                        applied_now = len(results.get("applied", []))
-                                        kw_applied += applied_now
-                                        session_total_applied += applied_now
-                                        total_skipped += len(results.get("skipped", []))
-                                        total_errors += len(results.get("errors", []))
-                                        st.session_state['applied_jobs'] = db.load_applied()
-                                        
-                                    except Exception as e:
-                                        st.error(f"Xing error: {e}")
+                                    applied_now = len(results.get("applied", []))
+                                    session_total_applied += applied_now
+                                    total_skipped += len(results.get("skipped", []))
+                                    total_errors += len(results.get("errors", []))
+                                    st.session_state['applied_jobs'] = db.load_applied()
+
+                                except Exception as e:
+                                    st.error(f"Xing error: {e}")
                     
                     # Collect all unknown questions from the session
                     all_unknown = applier.session_unknown_questions if hasattr(applier, 'session_unknown_questions') else []
@@ -763,7 +770,8 @@ if st.session_state['page'] == 'home':
                                          location=loc, 
                                          limit=scrape_limit, 
                                          platforms=platforms_arg,
-                                         easy_apply=False
+                                         easy_apply=False,
+                                         deep_scrape=deep_scrape_toggle
                                     )
                                 except Exception as e: 
                                     st.error(f"Failed for {kw} in {loc}: {e}")
@@ -989,6 +997,11 @@ elif st.session_state['page'] == 'explorer':
                 jid = f"{row['Job Title']}-{row['Company']}"
                 return jid == st.session_state["selected_job_id"]
                 
+            # Reorder columns for better visibility
+            cols_to_move = ["Platform", "Easy Apply", "Job Title", "Company", "Found_job", "Location", "Web Address"]
+            remaining_cols = [c for c in display_df.columns if c not in cols_to_move]
+            display_df = display_df[cols_to_move + remaining_cols]
+
             display_df.insert(0, "Select", display_df.apply(is_selected, axis=1).astype(bool))
             display_df.insert(1, "Applied", display_df.apply(is_applied_snapshot, axis=1).astype(bool))
             display_df.insert(2, "Delete", False)
@@ -1028,6 +1041,7 @@ elif st.session_state['page'] == 'explorer':
             cfg = {
                     "Select": st.column_config.CheckboxColumn("Select", width="small"),
                     "Applied": st.column_config.CheckboxColumn("Applied", help="Check to mark as applied", width="small"),
+                    "Easy Apply": st.column_config.CheckboxColumn("✨ Easy", help="Is this an Easy Apply job?", width="small"),
                     "Delete": st.column_config.CheckboxColumn("Delete", help="Check to delete this job permanently", width="small"),
                     "Park": st.column_config.CheckboxColumn("Park", help="Park this job (hide and ignore)", width="small"),
                     "Web Address": st.column_config.LinkColumn("Apply", display_text="Link"),
@@ -1406,7 +1420,7 @@ elif st.session_state['page'] == 'explorer':
                             try:
                                 crew = JobAnalysisCrew(context, selected_resume_data['text'])
                                 comp_keys = [analysis_options[c] for c in selected_components]
-                                results = crew.run_analysis(components=comp_keys)
+                                results = crew.run_analysis(components=comp_keys, use_browser=use_browser_analysis)
 
                                 # Merge with existing cache if any
                                 if job_id in st.session_state['job_cache']:

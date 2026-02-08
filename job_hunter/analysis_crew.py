@@ -3,6 +3,7 @@ import re
 import json
 from job_hunter.model_factory import get_llm
 from crewai import Agent, Task, Crew, Process
+from tools.browser_llm import BrowserLLM
 
 class JobAnalysisCrew:
     def __init__(self, job_text: str, resume_text: str):
@@ -62,9 +63,12 @@ class JobAnalysisCrew:
             print(f"DEBUG: FAIL TEXT: {text}")
             return {}
 
-    def run_analysis(self, components=None):
+    def run_analysis(self, components=None, use_browser=True):
         if components is None:
             components = ['intel', 'cover_letter', 'ats', 'resume']
+
+        if use_browser:
+            return self.run_browser_analysis(components)
 
         # 1. Setup LLM
         llm = get_llm(return_crew_llm=True)
@@ -275,3 +279,70 @@ Example JSON: {{"humanized_cover_letter": "Dear Hiring Team... I'm writing to...
         except Exception as e:
             print(f"CRASHED: {e}")
             return {"error": str(e)}
+
+    def run_browser_analysis(self, components):
+        """Runs the analysis using a browser-based LLM instead of API."""
+        print(f"[Analysis] Running browser-based analysis for: {components}")
+
+        # Determine which provider to use (could be a setting, default to ChatGPT)
+        provider = os.getenv("BROWSER_LLM_PROVIDER", "ChatGPT")
+        browser_llm = BrowserLLM(provider=provider)
+
+        # Construct a combined prompt
+        prompt = f"""
+I need you to perform a job analysis based on the following Job Description and my Resume.
+
+JOB DESCRIPTION:
+{self.job_text}
+
+RESUME:
+{self.resume_text}
+
+Please provide the following components in a single VALID JSON object.
+Ensure the JSON is well-formatted and can be parsed.
+
+COMPONENTS REQUESTED:
+{', '.join(components)}
+
+STRICT JSON STRUCTURE REQUIRED:
+{{
+"""
+        if 'intel' in components:
+            prompt += """  "company_intel": {
+    "mission": "...",
+    "key_facts": ["fact1", "fact2"],
+    "headquarters": "...",
+    "employees": "...",
+    "branches": "..."
+  },
+"""
+        if 'cover_letter' in components:
+            prompt += """  "cover_letter": "...",
+  "humanization_score": 95,
+"""
+        if 'ats' in components:
+            prompt += """  "ats_report": {
+    "score": 85,
+    "missing_skills": ["skill1", "skill2"]
+  },
+"""
+        if 'resume' in components:
+            prompt += """  "tailored_resume": "### Experience\\n...",
+"""
+
+        prompt += """  "status": "success"
+}
+
+Specific Instructions:
+- For 'cover_letter': Write a natural, human-sounding letter. Include a header with contact info from my resume. State my English level (C1) and German level (B1). Avoid robotic buzzwords.
+- For 'tailored_resume': Focus on rewriting the Experience section to match JD keywords.
+- For 'ats_report': Give an honest match score from 0-100.
+- Output ONLY the JSON object. No conversation.
+"""
+
+        response_text = browser_llm.ask(prompt)
+
+        # Parse result
+        results = self._clean_json(response_text)
+
+        return results

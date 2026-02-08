@@ -56,13 +56,28 @@ class IndeedScraper(BaseScraper):
                          except:
                              pass
 
+                    # Check for Easy Apply
+                    is_easy = False
+                    try:
+                        # Easily apply badge
+                        badge = card.find_element(By.CLASS_NAME, "ialbl") # 'ialbl' is a common class for Indeed Easy Apply
+                        if "apply" in badge.text.lower() or "bewerben" in badge.text.lower():
+                            is_easy = True
+                    except:
+                        try:
+                            # Secondary check for text
+                            if "easily apply" in card.text.lower() or "einfach bewerben" in card.text.lower():
+                                is_easy = True
+                        except: pass
+
                     if not any(j['link'] == link for j in results):
                         results.append({
                             "title": title,
                             "company": company,
                             "location": location,
                             "link": link,
-                            "platform": "Indeed"
+                            "platform": "Indeed",
+                            "is_easy_apply": is_easy
                         })
                 except Exception as e:
                     continue

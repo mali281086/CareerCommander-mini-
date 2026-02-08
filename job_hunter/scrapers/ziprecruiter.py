@@ -82,7 +82,8 @@ class ZipRecruiterScraper(BaseScraper):
                             "company": company,
                             "location": location,
                             "link": link,
-                            "platform": "ZipRecruiter"
+                            "platform": "ZipRecruiter",
+                            "is_easy_apply": False # Default for ZipRecruiter
                         })
                 except: continue
                 

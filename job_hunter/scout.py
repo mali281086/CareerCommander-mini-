@@ -4,6 +4,7 @@ from job_hunter.scrapers.stepstone import StepstoneScraper
 from job_hunter.scrapers.xing import XingScraper
 from job_hunter.scrapers.ziprecruiter import ZipRecruiterScraper
 from job_hunter.data_manager import DataManager
+from job_hunter.content_fetcher import ContentFetcher
 from tools.browser_manager import BrowserManager
 
 class Scout:
@@ -17,7 +18,7 @@ class Scout:
             "ZipRecruiter": ZipRecruiterScraper()
         }
 
-    def launch_mission(self, keyword, location, limit, platforms, easy_apply=False):
+    def launch_mission(self, keyword, location, limit, platforms, easy_apply=False, deep_scrape=False):
         all_results = []
         
         try:
@@ -35,8 +36,28 @@ class Scout:
                 else:
                     print(f"Platform {p_name} not yet implemented.")
             
-            # Save to DB
+            # Deep Scrape if requested
+            if deep_scrape and all_results:
+                print(f"Starting Deep Scrape for {len(all_results)} jobs...")
+                fetcher = ContentFetcher()
+                for i, job in enumerate(all_results):
+                    url = job.get("link")
+                    platform = job.get("platform")
+                    if url and platform:
+                        print(f"  [{i+1}/{len(all_results)}] Fetching details: {job.get('title')}")
+                        details = fetcher.fetch_details(url, platform)
+                        if details:
+                            job["rich_description"] = details.get("description", "")
+                            job["language"] = details.get("language", "Unknown")
+                            # Update company if found better name
+                            if details.get("company") and details.get("company") != job.get("company"):
+                                if "earn up to" not in details.get("company").lower():
+                                    job["company"] = details.get("company")
+                fetcher.close()
+
+            # Save to DB (Single call to avoid duplicates and ensure deep details are saved)
             saved_data = self.db.save_scouted_jobs(all_results, append=True)
+
             return saved_data
             
         finally:

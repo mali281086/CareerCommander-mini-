@@ -1,5 +1,6 @@
 import time
 import random
+import json
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -129,6 +130,7 @@ class JobApplier:
             "easy apply",
             "direkt bewerben",   # German: Apply Directly
             "jetzt bewerben",    # German: Apply Now (on Xing's internal system)
+            "bewerben",          # Generic apply
         ]
         
         # Keywords that indicate EXTERNAL APPLY (should skip)
@@ -474,12 +476,45 @@ class JobApplier:
                             print(f"[LinkedIn] 🔔 UNKNOWN QUESTION: '{label_text}'")
                             print(f"[LinkedIn] ⏳ Please fill this field on LinkedIn. Bot will capture your answer...")
                             
-                            # Play a sound to alert the user
+                            # Play a sound to alert the user (via Browser JS for better portability)
                             try:
-                                import winsound
-                                winsound.Beep(1000, 500)  # 1000 Hz for 500ms
+                                self.driver.execute_script("""
+                                    var context = new (window.AudioContext || window.webkitAudioContext)();
+                                    var osc = context.createOscillator();
+                                    osc.type = 'sine';
+                                    osc.frequency.setValueAtTime(880, context.currentTime);
+                                    osc.connect(context.destination);
+                                    osc.start();
+                                    osc.stop(context.currentTime + 0.5);
+                                """)
                             except:
-                                print('\a')  # Fallback terminal beep
+                                pass
+
+                            # Also try terminal beep as fallback
+                            print('\a')
+
+                            # Inject a visible prompt into the browser
+                            try:
+                                self.driver.execute_script(f"""
+                                    var msg = document.createElement('div');
+                                    msg.id = 'bot-prompt-overlay';
+                                    msg.style.position = 'fixed';
+                                    msg.style.top = '20px';
+                                    msg.style.left = '50%';
+                                    msg.style.transform = 'translateX(-50%)';
+                                    msg.style.backgroundColor = '#ff4b4b';
+                                    msg.style.color = 'white';
+                                    msg.style.padding = '15px 25px';
+                                    msg.style.zIndex = '10000';
+                                    msg.style.borderRadius = '8px';
+                                    msg.style.boxShadow = '0 4px 12px rgba(0,0,0,0.5)';
+                                    msg.style.fontWeight = 'bold';
+                                    msg.style.fontSize = '18px';
+                                    msg.style.textAlign = 'center';
+                                    msg.innerHTML = '🤖 Bot needs help!<br>Please answer: <span style="color: yellow;">' + {json.dumps(label_text)} + '</span>';
+                                    document.body.appendChild(msg);
+                                """)
+                            except: pass
                             
                             # Wait for user to fill the field (poll every 2 seconds, max 60 seconds)
                             max_wait = 60
@@ -497,6 +532,9 @@ class JobApplier:
                                         # Save to Q&A config automatically
                                         self.db.save_qa_answer(label_text, user_answer)
                                         print(f"[LinkedIn] 💾 Saved Q&A: '{label_text}' → '{user_answer}'")
+                                        # Remove overlay
+                                        try: self.driver.execute_script("var el = document.getElementById('bot-prompt-overlay'); if(el) el.remove();")
+                                        except: pass
                                         break
                                 except StaleElementReferenceException:
                                     break  # Element gone, page changed
@@ -507,6 +545,9 @@ class JobApplier:
                                 waited += poll_interval
                             
                             if not user_answer:
+                                # Remove overlay
+                                try: self.driver.execute_script("var el = document.getElementById('bot-prompt-overlay'); if(el) el.remove();")
+                                except: pass
                                 print(f"[LinkedIn] ⚠️ No answer provided, logging as unknown...")
                                 self.db.log_unknown_question(label_text, self.current_job_title, self.current_company)
                                 q_entry = {"question": label_text, "type": "text", "job": self.current_job_title}
@@ -796,14 +837,27 @@ class JobApplier:
         submit_selectors = [
             "button[type='submit']",
             "button[data-testid='submit-application']",
-            "button.submit-button"
+            "button.submit-button",
+            "//button[contains(., 'Bewerbung absenden')]",
+            "//button[contains(., 'Absenden')]",
+            "//button[contains(., 'Bestätigen')]"
         ]
         
         for selector in submit_selectors:
-            if self.click_element(selector, timeout=5):
-                self.random_sleep(2, 3)
-                self.applied_count += 1
-                return True, "Application submitted successfully!", True
+            try:
+                if selector.startswith("//"):
+                    btn = self.driver.find_element(By.XPATH, selector)
+                    btn.click()
+                    clicked = True
+                else:
+                    clicked = self.click_element(selector, timeout=5)
+
+                if clicked:
+                    self.random_sleep(2, 3)
+                    self.applied_count += 1
+                    return True, "Application submitted successfully!", True
+            except:
+                continue
         
         return False, "Submit button not found. Check manually.", True
     
@@ -1451,7 +1505,20 @@ class JobApplier:
             
             # Find job cards
             try:
-                job_cards = self.driver.find_elements(By.CSS_SELECTOR, "article[data-testid='job-posting-card'], .job-posting-card, a[data-testid='job-search-result']")
+                # Expanded selectors for Xing job cards
+                card_selectors = [
+                    "article[data-testid='job-posting-card']",
+                    ".job-posting-card",
+                    "a[data-testid='job-search-result']",
+                    "article[class*='JobPostingCard']",
+                    "div[data-testid='job-search-result-container'] article"
+                ]
+                job_cards = []
+                for sel in card_selectors:
+                    found = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                    if found:
+                        job_cards = found
+                        break
                 log(f"Found {len(job_cards)} job cards")
             except:
                 job_cards = []
