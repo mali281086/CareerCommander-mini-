@@ -108,26 +108,31 @@ class JobAnalysisCrew:
                 llm=llm
             )
             task_cl = Task(
-                 description=f"""Write a highly professional, direct, and human-sounding cover letter following this EXACT format:
+                 description=f"""Write a highly professional, direct, and human-sounding cover letter following this EXACT template and structure.
+ONLY change the fields which are covered with curly braces or clearly need tailoring to the specific Job Description (JD).
 
-FORMAT:
-Subject: Job Application for [Job Title]
+TEMPLATE:
+Subject: Job Application for {{Job Title}}
 
 Dear Hiring Manager,
-I am addressing to show my interest in the vacancy of [Job Title] at [Company]. Having more than [Number] years of experience in [Field], [Specialization 1], and [Specialization 2] in the [Sectors], I would be glad to apply my experience to the mission of [Company] to [Company Mission/Goal].
 
-[Paragraph 2: Focus on specific technical achievements related to the JD. Mention specific tools used and quantitative results.]
+I am addressing to show my interest in the vacancy of {{Job Title}} at {{Company Name}}. Having more than 8 years of experience in the business analysis field, digital transformation, and data-driven solutions in the banking and regulated sectors.
 
-[Paragraph 3: Focus on knowledge of the sector (e.g., banking/finance) and soft skills like facilitation between business and IT.]
+I have worked closely with business stakeholders, IT departments and external data suppliers to examine, standardise and optimise complex business processes. Most recently, in my position as IT Product Lead at the Institute of Business Administration, I planned and developed Python-based ETL pipelines, which combined Bloomberg and Refinitiv sources of data, effectively decreasing the reporting latency by 3 folds and improving data quality. This is related to what you focus on {{processing of data in capital markets, automation, and the incorporation of new data sources}}.
 
-[Paragraph 4: Technical stack summary and language proficiency. MUST state: "I have strong technical skills in [Stack], as well as an organized and analytical work style. My practical proficiency in English (C1 level) and decent proficiency in German (B1 level) are virtues that I constantly improve professionally."]
+The knowledge that I have gained throughout my career in banking and controlled settings has provided me with a profound insight into data flows, and quality specifications, especially in cases when accuracy, traceability, and regulatory relevance are of primary importance. I also have a lot of experience in converting business requirements into clear functional specifications, justifying IT implementation, validation of technical output, and successful user acceptance. I am particularly skilled when it comes to being a facilitator between business, IT, and external partners one of the key positions in this job.
 
-[Paragraph 5: Closing statement expressing interest in contributing to [Company] and looking forward to the interview.]
+I have strong technical skills in Python, SQL, Power BI, advanced Excel, and integration of data using API, as well as an organized and analytical work style. My practical proficiency in English (C1 level) and decent proficiency in German (B1 level) are virtues that I constantly improve professionally.
+
+I would be happy to bring my critical thinking skills, experience in transformations and assist in the further modernization of relationships and data environment. I am looking forward to discuss how my profile can contribute to this role.
+
+Kind regards,
+Sheikh Ali Mateen
 
 STRICT REQUIREMENTS:
 - Use first-person perspective.
-- Avoid robotic "AI-speak" (no "Furthermore", "Moreover", "In conclusion").
-- Ensure the tone is grounded and professional.
+- Maintain the EXACT wording of the template except for the placeholders.
+- Ensure the tailored part (related to what they focus on) is relevant to the Job Description.
 - Job: {self.job_text}
 - Resume: {self.resume_text}
 
@@ -149,15 +154,15 @@ Example JSON: {{"cover_letter": "Subject: Job Application for...\\n\\nDear Hirin
                 llm=llm
             )
             task_humanizer = Task(
-                description=f"""Refine the cover letter to ensure it sounds completely human and follows the requested "Direct-Professional" template.
+                description=f"""Refine the cover letter to ensure it sounds completely human and adheres strictly to the wording provided in the template.
 
 STRICT HUMANIZATION GUIDELINES:
 1. GREETING: Must be "Dear Hiring Manager,".
 2. TONE: Avoid flowery language. Use direct sentences.
 3. NO AI TRANSITIONS: Banned words: "Furthermore,", "Moreover,", "Additionally,", "Notably,", "In addition,".
-4. PHRASING: Use natural professional language. Example: "I have worked closely with..." instead of "I have collaborated extensively with...".
+4. WORDING: Maintain the EXACT wording of the template provided in the previous step, including the sign-off "Sheikh Ali Mateen".
 5. FLOW: Ensure the letter feels like a personal address, not a generic template.
-6. SPECIFICITY: Ensure the technical achievements from Paragraph 2 are preserved and sound authentic.
+6. SPECIFICITY: Ensure the tailored JD parts in Paragraph 2 are preserved and sound authentic.
 
 FINAL ANSWER MUST BE JSON with keys 'humanized_cover_letter' and 'humanization_score'.
 Example JSON: {{"humanized_cover_letter": "Subject: Job Application... Dear Hiring Manager...", "humanization_score": 98}}""",
@@ -334,15 +339,27 @@ STRICT JSON STRUCTURE REQUIRED:
 }
 
 Specific Instructions:
-- For 'cover_letter': Write a highly professional, direct cover letter.
-  FORMAT:
-  Subject: Job Application for [Job Title]
+- For 'cover_letter': Write a highly professional, direct cover letter using the following EXACT template.
+  ONLY change the fields which are covered with curly braces or clearly need tailoring to the specific Job Description.
+
+  TEMPLATE:
+  Subject: Job Application for {Job Title}
+
   Dear Hiring Manager,
-  [Direct intro: show interest in [Job Title] at [Company]. Mention years of experience and core fields.]
-  [Paragraph 2: Focus on specific technical achievements and tools.]
-  [Paragraph 3: Knowledge of banking/sectors and soft skills/facilitation.]
-  [Paragraph 4: Technical stack summary. Mention: "I have strong technical skills in [Stack], as well as an organized and analytical work style. My practical proficiency in English (C1 level) and decent proficiency in German (B1 level) are virtues that I constantly improve professionally."]
-  [Paragraph 5: Direct closing.]
+
+  I am addressing to show my interest in the vacancy of {Job Title} at {Company Name}. Having more than 8 years of experience in the business analysis field, digital transformation, and data-driven solutions in the banking and regulated sectors.
+
+  I have worked closely with business stakeholders, IT departments and external data suppliers to examine, standardise and optimise complex business processes. Most recently, in my position as IT Product Lead at the Institute of Business Administration, I planned and developed Python-based ETL pipelines, which combined Bloomberg and Refinitiv sources of data, effectively decreasing the reporting latency by 3 folds and improving data quality. This is related to what you focus on {processing of data in capital markets, automation, and the incorporation of new data sources}.
+
+  The knowledge that I have gained throughout my career in banking and controlled settings has provided me with a profound insight into data flows, and quality specifications, especially in cases when accuracy, traceability, and regulatory relevance are of primary importance. I also have a lot of experience in converting business requirements into clear functional specifications, justifying IT implementation, validation of technical output, and successful user acceptance. I am particularly skilled when it comes to being a facilitator between business, IT, and external partners one of the key positions in this job.
+
+  I have strong technical skills in Python, SQL, Power BI, advanced Excel, and integration of data using API, as well as an organized and analytical work style. My practical proficiency in English (C1 level) and decent proficiency in German (B1 level) are virtues that I constantly improve professionally.
+
+  I would be happy to bring my critical thinking skills, experience in transformations and assist in the further modernization of relationships and data environment. I am looking forward to discuss how my profile can contribute to this role.
+
+  Kind regards,
+  Sheikh Ali Mateen
+
   Use NO AI transitions like "Furthermore" or "Moreover". Keep it grounded.
 - For 'tailored_resume': Focus on rewriting the Experience section to match JD keywords.
 - For 'ats_report': Give an honest match score from 0-100.

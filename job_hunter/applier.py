@@ -526,7 +526,7 @@ class JobApplier:
                                                 <h1 style="margin: 0 0 15px 0; color: #ff4b4b;">🤖 ACTION REQUIRED</h1>
                                                 <p style="font-size: 20px; margin-bottom: 20px;">The bot encountered a question it cannot answer:</p>
                                                 <div style="background: #1e1e1e; padding: 15px; border-radius: 8px; font-size: 24px; color: yellow; margin-bottom: 25px; border: 1px solid #444;">
-                                                    ${{JSON.stringify(label_text)}}
+                                                    {json.dumps(label_text)}
                                                 </div>
                                                 <p style="font-size: 18px;">Please <b>type your answer</b> in the LinkedIn field below.</p>
                                                 <button id="bot-beep-btn" style="background: #ff4b4b; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; margin-top: 10px;">🔊 Test Sound</button>
