@@ -88,14 +88,16 @@ class LinkedInScraper(BaseScraper):
 
                         # Dedup check in local list
                         if not any(j['link'] == link for j in results):
-                            results.append({
+                            job_data = {
                                 "title": title,
                                 "company": company,
                                 "location": location, # Default to search loc if specific element missing
                                 "link": link,
                                 "platform": "LinkedIn",
                                 "is_easy_apply": is_easy
-                            })
+                            }
+
+                            results.append(job_data)
                             jobs_found_on_page += 1
                     except Exception as e:
                         continue

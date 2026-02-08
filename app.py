@@ -623,7 +623,7 @@ if st.session_state['page'] == 'home':
         
         c_easy, c_deep = st.columns([1, 1])
         easy_apply_only = c_easy.toggle("✨ Easy Apply Only", value=False, help="Live Apply Mode: Browse & Apply until limit reached")
-        deep_scrape_toggle = c_deep.toggle("🕵️ Deep Scrape JDs", value=False, help="Fetch full Job Description during scraping. (Slower but better analysis)")
+        deep_scrape_toggle = c_deep.toggle("🕵️ Deep Scrape JDs", value=True, help="Fetch full Job Description during scraping. (Slower but better analysis)")
         
         if easy_apply_only:
              platforms = ["LinkedIn", "Xing"]
@@ -762,7 +762,7 @@ if st.session_state['page'] == 'home':
 
                         for kw in keywords:
                             for loc in locations:
-                                status_box.info(f"🚀 [{idx+1}/{total}] Scouting for **{kw}** in **{loc}** ({role_name})...")
+                                status_box.info(f"🚀 [{idx+1}/{total}] Scouting & Analyzing for **{kw}** in **{loc}**...")
                                 
                                 try:
                                     scout.launch_mission(
@@ -771,12 +771,13 @@ if st.session_state['page'] == 'home':
                                          limit=scrape_limit, 
                                          platforms=platforms_arg,
                                          easy_apply=False,
-                                         deep_scrape=deep_scrape_toggle
+                                         deep_scrape=deep_scrape_toggle,
+                                         status_callback=lambda m: status_box.info(f"🚀 [{idx+1}/{total}] {m}")
                                     )
                                 except Exception as e: 
                                     st.error(f"Failed for {kw} in {loc}: {e}")
                     
-                    status_box.success("🎉 All Missions Complete! Taking you to results...")
+                    status_box.success("🎉 All Missions Complete (Scraped & Enriched)! Taking you to results...")
                 
                 st.cache_data.clear() # Clear cache to load new data
                 st.session_state['page'] = 'explorer'
