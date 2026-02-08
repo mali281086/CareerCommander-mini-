@@ -348,4 +348,7 @@ Specific Instructions:
         # Parse result
         results = self._clean_json(response_text)
 
+        # Close the tab to clean up
+        browser_llm.close_tab()
+
         return results

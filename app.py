@@ -388,7 +388,8 @@ def save_resume_config():
             "filename": data.get("filename"),
             "file_path": data.get("file_path"),
             "text": data.get("text"),
-            "suggestions": data.get("suggestions", [])
+            "suggestions": data.get("suggestions", []),
+            "target_keywords": data.get("target_keywords", "")
         }
     try:
         with open(RESUME_CONFIG, "w", encoding="utf-8") as f:
@@ -415,7 +416,8 @@ def load_resume_config():
                         "file_path": fpath,
                         "text": data.get("text", ""),
                         "bytes": file_bytes,
-                        "suggestions": data.get("suggestions", [])
+                        "suggestions": data.get("suggestions", []),
+                        "target_keywords": data.get("target_keywords", "")
                     }
         except Exception as e:
             print(f"Error loading resume config: {e}")
@@ -688,46 +690,48 @@ if st.session_state['page'] == 'home':
                             locations = ["Germany"]
                         
                         for kw in keywords:
+                            # Tracking per keyword and platform to respect "Limit per Role & Platform"
+                            kw_applied_li = 0
+                            kw_applied_xing = 0
+
                             for loc in locations:
                                 # LinkedIn Live Apply
-                                status_box.info(f"🔍 [LinkedIn] '{kw}' in '{loc}' (Target: {scrape_limit})...")
-                                
-                                try:
-                                    results = applier.live_apply_linkedin(
-                                        keyword=kw,
-                                        location=loc,
-                                        target_count=scrape_limit,
-                                        target_role=kw
-                                    )
-                                    
-                                    applied_now = len(results.get("applied", []))
-                                    session_total_applied += applied_now
-                                    total_skipped += len(results.get("skipped", []))
-                                    total_errors += len(results.get("errors", []))
-                                    st.session_state['applied_jobs'] = db.load_applied()
-                                    
-                                except Exception as e:
-                                    st.error(f"LinkedIn error: {e}")
+                                if kw_applied_li < scrape_limit:
+                                    status_box.info(f"🔍 [LinkedIn] '{kw}' in '{loc}' (Remaining: {scrape_limit - kw_applied_li})...")
+                                    try:
+                                        results = applier.live_apply_linkedin(
+                                            keyword=kw,
+                                            location=loc,
+                                            target_count=scrape_limit - kw_applied_li,
+                                            target_role=kw
+                                        )
+                                        applied_now = len(results.get("applied", []))
+                                        kw_applied_li += applied_now
+                                        session_total_applied += applied_now
+                                        total_skipped += len(results.get("skipped", []))
+                                        total_errors += len(results.get("errors", []))
+                                        st.session_state['applied_jobs'] = db.load_applied()
+                                    except Exception as e:
+                                        st.error(f"LinkedIn error: {e}")
                                 
                                 # Xing Live Apply
-                                status_box.info(f"🔍 [Xing] '{kw}' in '{loc}' (Target: {scrape_limit})...")
-
-                                try:
-                                    results = applier.live_apply_xing(
-                                        keyword=kw,
-                                        location=loc,
-                                        target_count=scrape_limit,
-                                        target_role=kw
-                                    )
-                                    
-                                    applied_now = len(results.get("applied", []))
-                                    session_total_applied += applied_now
-                                    total_skipped += len(results.get("skipped", []))
-                                    total_errors += len(results.get("errors", []))
-                                    st.session_state['applied_jobs'] = db.load_applied()
-
-                                except Exception as e:
-                                    st.error(f"Xing error: {e}")
+                                if kw_applied_xing < scrape_limit:
+                                    status_box.info(f"🔍 [Xing] '{kw}' in '{loc}' (Remaining: {scrape_limit - kw_applied_xing})...")
+                                    try:
+                                        results = applier.live_apply_xing(
+                                            keyword=kw,
+                                            location=loc,
+                                            target_count=scrape_limit - kw_applied_xing,
+                                            target_role=kw
+                                        )
+                                        applied_now = len(results.get("applied", []))
+                                        kw_applied_xing += applied_now
+                                        session_total_applied += applied_now
+                                        total_skipped += len(results.get("skipped", []))
+                                        total_errors += len(results.get("errors", []))
+                                        st.session_state['applied_jobs'] = db.load_applied()
+                                    except Exception as e:
+                                        st.error(f"Xing error: {e}")
                     
                     # Collect all unknown questions from the session
                     all_unknown = applier.session_unknown_questions if hasattr(applier, 'session_unknown_questions') else []
@@ -1356,11 +1360,14 @@ elif st.session_state['page'] == 'explorer':
                 if search_keyword in st.session_state['resumes']:
                     selected_resume_key = search_keyword
                 else:
-                     for rk in available_resumes:
-                         if rk.lower() in search_keyword.lower() or search_keyword.lower() in rk.lower():
-                             selected_resume_key = rk
-                             break
+                    for rk in available_resumes:
+                        if rk.lower() in search_keyword.lower() or search_keyword.lower() in rk.lower():
+                            selected_resume_key = rk
+                            break
                 
+                # Selected Components (Hidden or set to all)
+                analysis_components = ["intel", "cover_letter", "ats", "resume"]
+
                 if not available_resumes:
                     st.error("❌ No active resumes found.")
                     selected_resume_data = {"text": "", "bytes": None}
@@ -1369,18 +1376,8 @@ elif st.session_state['page'] == 'explorer':
                     selected_resume_key = col_sel_res.selectbox("Using Persona:", available_resumes, index=available_resumes.index(selected_resume_key) if selected_resume_key in available_resumes else 0)
                     selected_resume_data = st.session_state['resumes'][selected_resume_key]
 
-                    analysis_options = {
-                        "Cover Letter": "cover_letter",
-                        "Company Intel": "intel",
-                        "ATS Match": "ats",
-                        "Strategized Resume": "resume"
-                    }
-                    selected_components = col_sel_comp.multiselect(
-                        "Analyze Components:",
-                        options=list(analysis_options.keys()),
-                        default=["Cover Letter"],
-                        help="Select which AI analysis components to run. Fewer components save API quota."
-                    )
+                    # Show components that will be analyzed
+                    col_sel_comp.info("Running: Intel, Cover Letter, ATS Match, Resume")
 
                 # Action Bar
                 c_act1, c_act2, c_act3 = st.columns([2, 2, 2])
@@ -1408,7 +1405,7 @@ elif st.session_state['page'] == 'explorer':
                     can_run = has_resume and has_details
                     btn_text = "🔄 Re-Analyze" if is_cached else "✨ Run AI Analysis"
                     
-                    if st.button(btn_text, type="primary" if not is_cached else "secondary", disabled=not can_run or not selected_components, width="stretch"):
+                    if st.button(btn_text, type="primary" if not is_cached else "secondary", disabled=not can_run, width="stretch"):
                          with st.spinner(f"Analyzing for '{selected_resume_key}'..."):
                             scraped_jd = job.get('Job Description', '')
                             if job.get('Rich Description'): scraped_jd = job.get('Rich Description')
@@ -1420,8 +1417,7 @@ elif st.session_state['page'] == 'explorer':
                                 context += "\n(Text unavailable.)"
                             try:
                                 crew = JobAnalysisCrew(context, selected_resume_data['text'])
-                                comp_keys = [analysis_options[c] for c in selected_components]
-                                results = crew.run_analysis(components=comp_keys, use_browser=use_browser_analysis)
+                                results = crew.run_analysis(components=analysis_components, use_browser=use_browser_analysis)
 
                                 # Merge with existing cache if any
                                 if job_id in st.session_state['job_cache']:

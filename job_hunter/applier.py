@@ -131,6 +131,10 @@ class JobApplier:
             "direkt bewerben",   # German: Apply Directly
             "jetzt bewerben",    # German: Apply Now (on Xing's internal system)
             "bewerben",          # Generic apply
+            "bewerbung absenden",
+            "lebenslauf senden",
+            "auf xing bewerben",
+            "apply on xing"
         ]
         
         # Keywords that indicate EXTERNAL APPLY (should skip)
@@ -143,7 +147,10 @@ class JobApplier:
             "karriereseite",     # German: Career Site
             "zur bewerbung beim arbeitgeber",
             "apply on company site",
-            "auf der seite des arbeitgebers bewerben"
+            "auf der seite des arbeitgebers bewerben",
+            "arbeitgeber-website",
+            "offsite",
+            "extern"
         ]
         
         # Look for apply buttons and check their text
@@ -476,48 +483,77 @@ class JobApplier:
                             print(f"[LinkedIn] 🔔 UNKNOWN QUESTION: '{label_text}'")
                             print(f"[LinkedIn] ⏳ Please fill this field on LinkedIn. Bot will capture your answer...")
                             
-                            # Play a sound to alert the user (via Browser JS for better portability)
+                            # Interactive mode: Alert user and wait for them to fill the field
+                            print(f"[LinkedIn] 🔔 UNKNOWN QUESTION: '{label_text}'")
+
+                            # Inject a highly visible prompt and beep logic into the browser
                             try:
-                                self.driver.execute_script("""
-                                    var context = new (window.AudioContext || window.webkitAudioContext)();
-                                    var osc = context.createOscillator();
-                                    osc.type = 'sine';
-                                    osc.frequency.setValueAtTime(880, context.currentTime);
-                                    osc.connect(context.destination);
-                                    osc.start();
-                                    osc.stop(context.currentTime + 0.5);
+                                self.driver.execute_script(f"""
+                                    (function() {{
+                                        // 1. Create Audio context and beep function
+                                        var context = new (window.AudioContext || window.webkitAudioContext)();
+                                        function beep() {{
+                                            var osc = context.createOscillator();
+                                            var gain = context.createGain();
+                                            osc.type = 'sine';
+                                            osc.frequency.setValueAtTime(880, context.currentTime);
+                                            gain.gain.setValueAtTime(0.5, context.currentTime);
+                                            osc.connect(gain);
+                                            gain.connect(context.destination);
+                                            osc.start();
+                                            osc.stop(context.currentTime + 0.3);
+                                        }}
+
+                                        // 2. Initial attempt to beep
+                                        if (context.state === 'suspended') {{
+                                            console.log('Audio suspended, waiting for interaction');
+                                        }} else {{
+                                            beep();
+                                        }}
+
+                                        // 3. Create Overlay
+                                        var msg = document.getElementById('bot-prompt-overlay');
+                                        if (!msg) {{
+                                            msg = document.createElement('div');
+                                            msg.id = 'bot-prompt-overlay';
+                                            document.body.appendChild(msg);
+                                        }}
+
+                                        msg.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,0,0,0.3); border: 10px solid #ff4b4b; z-index: 10000; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; text-shadow: 2px 2px 4px black; font-family: sans-serif;';
+
+                                        msg.innerHTML = `
+                                            <div style="background: #262730; padding: 30px; border-radius: 15px; border: 3px solid #ff4b4b; pointer-events: auto; text-align: center; max-width: 80%;">
+                                                <h1 style="margin: 0 0 15px 0; color: #ff4b4b;">🤖 ACTION REQUIRED</h1>
+                                                <p style="font-size: 20px; margin-bottom: 20px;">The bot encountered a question it cannot answer:</p>
+                                                <div style="background: #1e1e1e; padding: 15px; border-radius: 8px; font-size: 24px; color: yellow; margin-bottom: 25px; border: 1px solid #444;">
+                                                    ${{JSON.stringify(label_text)}}
+                                                </div>
+                                                <p style="font-size: 18px;">Please <b>type your answer</b> in the LinkedIn field below.</p>
+                                                <button id="bot-beep-btn" style="background: #ff4b4b; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; margin-top: 10px;">🔊 Test Sound</button>
+                                            </div>
+                                        `;
+
+                                        document.getElementById('bot-beep-btn').onclick = function() {{
+                                            context.resume().then(() => beep());
+                                        }};
+
+                                        // 4. Repeated beep every 5 seconds until removed
+                                        var beepInterval = setInterval(function() {{
+                                            if (document.getElementById('bot-prompt-overlay')) {{
+                                                if (context.state !== 'suspended') beep();
+                                            }} else {{
+                                                clearInterval(beepInterval);
+                                            }}
+                                        }}, 5000);
+                                    }})();
                                 """)
-                            except:
-                                pass
+                            except: pass
 
                             # Also try terminal beep as fallback
                             print('\a')
-
-                            # Inject a visible prompt into the browser
-                            try:
-                                self.driver.execute_script(f"""
-                                    var msg = document.createElement('div');
-                                    msg.id = 'bot-prompt-overlay';
-                                    msg.style.position = 'fixed';
-                                    msg.style.top = '20px';
-                                    msg.style.left = '50%';
-                                    msg.style.transform = 'translateX(-50%)';
-                                    msg.style.backgroundColor = '#ff4b4b';
-                                    msg.style.color = 'white';
-                                    msg.style.padding = '15px 25px';
-                                    msg.style.zIndex = '10000';
-                                    msg.style.borderRadius = '8px';
-                                    msg.style.boxShadow = '0 4px 12px rgba(0,0,0,0.5)';
-                                    msg.style.fontWeight = 'bold';
-                                    msg.style.fontSize = '18px';
-                                    msg.style.textAlign = 'center';
-                                    msg.innerHTML = '🤖 Bot needs help!<br>Please answer: <span style="color: yellow;">' + {json.dumps(label_text)} + '</span>';
-                                    document.body.appendChild(msg);
-                                """)
-                            except: pass
                             
-                            # Wait for user to fill the field (poll every 2 seconds, max 60 seconds)
-                            max_wait = 60
+                            # Wait for user to fill the field (poll every 2 seconds, max 120 seconds for user comfort)
+                            max_wait = 120
                             poll_interval = 2
                             waited = 0
                             user_answer = None
@@ -532,6 +568,7 @@ class JobApplier:
                                         # Save to Q&A config automatically
                                         self.db.save_qa_answer(label_text, user_answer)
                                         print(f"[LinkedIn] 💾 Saved Q&A: '{label_text}' → '{user_answer}'")
+
                                         # Remove overlay
                                         try: self.driver.execute_script("var el = document.getElementById('bot-prompt-overlay'); if(el) el.remove();")
                                         except: pass
@@ -796,7 +833,11 @@ class JobApplier:
             "button[data-testid='apply-button']",
             "a[data-testid='apply-button']",
             "button.apply-button",
-            "a.apply-button"
+            "a.apply-button",
+            "button[data-testid='nls-apply-button']",
+            "a[data-testid='nls-apply-button']",
+            ".apply-button-container button",
+            "div[class*='ApplyButton'] button"
         ]
         
         clicked = False
@@ -807,14 +848,23 @@ class JobApplier:
                 break
         
         if not clicked:
-            # Try XPath for text-based search
-            try:
-                apply_btn = self.driver.find_element(By.XPATH, "//button[contains(text(), 'bewerben')] | //a[contains(text(), 'bewerben')]")
-                apply_btn.click()
-                clicked = True
-                print("[Xing] Clicked Apply button (XPath).")
-            except:
-                pass
+            # Try XPath for text-based search (EN and DE)
+            xpath_queries = [
+                "//button[contains(translate(., 'BEWERBEN', 'bewerben'), 'bewerben')]",
+                "//a[contains(translate(., 'BEWERBEN', 'bewerben'), 'bewerben')]",
+                "//button[contains(translate(., 'APPLY', 'apply'), 'apply')]",
+                "//a[contains(translate(., 'APPLY', 'apply'), 'apply')]"
+            ]
+            for query in xpath_queries:
+                try:
+                    apply_btn = self.driver.find_element(By.XPATH, query)
+                    if apply_btn.is_displayed():
+                        apply_btn.click()
+                        clicked = True
+                        print(f"[Xing] Clicked Apply button via XPath: {query}")
+                        break
+                except:
+                    continue
         
         if not clicked:
             return False, "Apply button not found.", False
@@ -838,9 +888,12 @@ class JobApplier:
             "button[type='submit']",
             "button[data-testid='submit-application']",
             "button.submit-button",
-            "//button[contains(., 'Bewerbung absenden')]",
-            "//button[contains(., 'Absenden')]",
-            "//button[contains(., 'Bestätigen')]"
+            "button[data-testid='nls-submit-button']",
+            "button[class*='SubmitButton']",
+            "//button[contains(translate(., 'ABSENDEN', 'absenden'), 'absenden')]",
+            "//button[contains(translate(., 'BESTÄTIGEN', 'bestätigen'), 'bestätigen')]",
+            "//button[contains(translate(., 'SUBMIT', 'submit'), 'submit')]",
+            "//button[contains(translate(., 'CONFIRM', 'confirm'), 'confirm')]"
         ]
         
         for selector in submit_selectors:

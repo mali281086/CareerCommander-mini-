@@ -25,14 +25,23 @@ class BrowserLLM:
         """Ensure we have a tab open for the provider."""
         url = self.PROVIDERS[self.provider]
 
-        # Check if we already have a tab for this
+        # 1. Check if we already have a tab for this provider
         for handle in self.driver.window_handles:
             self.driver.switch_to.window(handle)
             if url in self.driver.current_url:
                 self.tab_handle = handle
                 return
 
-        # Not found, open new
+        # 2. Look for ANY blank/new tab to reuse
+        for handle in self.driver.window_handles:
+            self.driver.switch_to.window(handle)
+            if self.driver.current_url in ["about:blank", "data:,", "chrome://newtab/"]:
+                self.driver.get(url)
+                self.tab_handle = handle
+                time.sleep(5)
+                return
+
+        # 3. Otherwise, open a new tab
         self.driver.execute_script(f"window.open('{url}', '_blank');")
         time.sleep(2)
         self.tab_handle = self.driver.window_handles[-1]
@@ -40,6 +49,18 @@ class BrowserLLM:
 
         # Initial wait for load
         time.sleep(5)
+
+    def close_tab(self):
+        """Closes the tab used for analysis if it's still open."""
+        if self.tab_handle and self.tab_handle in self.driver.window_handles:
+            try:
+                self.driver.switch_to.window(self.tab_handle)
+                self.driver.close()
+                # Switch back to whatever is left
+                if self.driver.window_handles:
+                    self.driver.switch_to.window(self.driver.window_handles[0])
+            except:
+                pass
 
     def ask(self, prompt, timeout=120):
         """Sends prompt and waits for response."""
@@ -60,11 +81,6 @@ class BrowserLLM:
             wait = WebDriverWait(self.driver, 20)
             text_area = wait.until(EC.presence_of_element_located((By.ID, "prompt-textarea")))
 
-            # Clear is hard on these rich editors, usually better to just paste
-            # But let's try to make sure it's empty
-            text_area.send_keys(Keys.CONTROL + "a")
-            text_area.send_keys(Keys.BACKSPACE)
-
             # Use JS to set value for large prompts (faster and more reliable)
             self.driver.execute_script("arguments[0].innerText = arguments[1];", text_area, prompt)
             text_area.send_keys(" ") # Trigger event
@@ -73,25 +89,22 @@ class BrowserLLM:
             time.sleep(2)
 
             # Wait for response to finish
-            # Check for the "Stop generating" or "Regenerate" button
-            # Usually when generation is active, there is a stop button.
-            # When done, there is a regenerate or the send button is re-enabled.
-
             start_time = time.time()
             while time.time() - start_time < timeout:
                 try:
-                    # If we see the "Send" button enabled again and NO "Stop" button
+                    # Check for send button state
                     send_btn = self.driver.find_element(By.CSS_SELECTOR, "button[data-testid='send-button']")
                     if send_btn.is_enabled():
-                        # Wait a bit more to be sure
-                        time.sleep(3)
-                        break
+                        # Also ensure the stop button is gone
+                        stop_btns = self.driver.find_elements(By.CSS_SELECTOR, "button[aria-label='Stop generating']")
+                        if not stop_btns:
+                            time.sleep(3)
+                            break
                 except:
                     pass
                 time.sleep(2)
 
             # Extract last response
-            # Multiple possible selectors for ChatGPT messages
             selectors = [
                 "div[data-message-author-role='assistant']",
                 ".markdown.prose",
@@ -101,22 +114,35 @@ class BrowserLLM:
             for selector in selectors:
                 responses = self.driver.find_elements(By.CSS_SELECTOR, selector)
                 if responses:
-                    # Get the very last one
                     text = responses[-1].text
                     if text and len(text) > 10:
                         return text
 
-            # Fallback: find any div with significant text that appeared after our prompt
             return "Failed to extract response from ChatGPT."
-
         except Exception as e:
             return f"Error interacting with ChatGPT: {e}"
 
     def _ask_gemini(self, prompt, timeout):
         try:
-            # Gemini prompt area
             wait = WebDriverWait(self.driver, 20)
-            prompt_div = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.prompt-textarea-wrapper div[contenteditable='true']")))
+
+            # Multiple prompt area selectors for Gemini
+            prompt_selectors = [
+                "div.prompt-textarea-wrapper div[contenteditable='true']",
+                "textarea[aria-label*='Prompt']",
+                "div[contenteditable='true'][role='textbox']",
+                ".textarea_container textarea"
+            ]
+
+            prompt_div = None
+            for sel in prompt_selectors:
+                try:
+                    prompt_div = self.driver.find_element(By.CSS_SELECTOR, sel)
+                    if prompt_div.is_displayed(): break
+                except: continue
+
+            if not prompt_div:
+                prompt_div = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.prompt-textarea-wrapper div[contenteditable='true']")))
 
             self.driver.execute_script("arguments[0].innerText = arguments[1];", prompt_div, prompt)
             prompt_div.send_keys(" ")
@@ -126,23 +152,25 @@ class BrowserLLM:
 
             start_time = time.time()
             while time.time() - start_time < timeout:
-                # Gemini shows "stop" button during gen, and "Done" when finished usually.
-                # Or we can check for the presence of the last response's "Good response" icons
                 try:
-                    # Check for "Share" icon which appears when done
-                    share_btns = self.driver.find_elements(By.CSS_SELECTOR, "button[aria-label*='Share']")
-                    if share_btns:
-                        time.sleep(2)
-                        break
+                    # Check for "Share" icon or stop generating state
+                    # In Gemini, the "stop" button might be visible during generation
+                    stop_btns = self.driver.find_elements(By.CSS_SELECTOR, "button[aria-label='Stop generating']")
+                    if not stop_btns:
+                        # Check if response tools (copy, share) are visible for the last response
+                        tools = self.driver.find_elements(By.CSS_SELECTOR, "div.response-tools")
+                        if tools:
+                            time.sleep(3)
+                            break
                 except:
                     pass
                 time.sleep(2)
 
-            # Possible selectors for Gemini
             selectors = [
                 "div.message-content",
                 "model-response div.content",
-                ".markdown"
+                ".markdown",
+                "div[class*='response-container']"
             ]
 
             for selector in selectors:
@@ -157,5 +185,63 @@ class BrowserLLM:
             return f"Error interacting with Gemini: {e}"
 
     def _ask_copilot(self, prompt, timeout):
-        # Implementation for Copilot would go here
-        return "Copilot automation not fully implemented yet. Please use ChatGPT or Gemini."
+        try:
+            wait = WebDriverWait(self.driver, 20)
+
+            # Copilot UI is inside a shadow DOM often, or just complex
+            # Multiple selectors for Copilot textarea
+            prompt_selectors = [
+                "textarea#searchbox",
+                "textarea[placeholder*='Ask']",
+                "textarea.searchboxinput",
+                "div[contenteditable='true']"
+            ]
+
+            text_area = None
+            for sel in prompt_selectors:
+                try:
+                    text_area = self.driver.find_element(By.CSS_SELECTOR, sel)
+                    if text_area.is_displayed(): break
+                except: continue
+
+            if not text_area:
+                text_area = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "textarea")))
+
+            self.driver.execute_script("arguments[0].value = arguments[1];", text_area, prompt)
+            text_area.send_keys(" ")
+            text_area.send_keys(Keys.ENTER)
+
+            time.sleep(3)
+
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                try:
+                    # Look for stop button absence or "New Topic" button presence
+                    new_topic = self.driver.find_elements(By.CSS_SELECTOR, "button.new-topic-button")
+                    stop = self.driver.find_elements(By.CSS_SELECTOR, "button#stop-button")
+                    if not stop and new_topic:
+                        time.sleep(3)
+                        break
+                except:
+                    pass
+                time.sleep(2)
+
+            # Extract Copilot response
+            selectors = [
+                "div.ac-container",
+                "div.message-content",
+                "div.attribution-container"
+            ]
+
+            for selector in selectors:
+                responses = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                if responses:
+                    # Copilot responses are often in a list
+                    for res in reversed(responses):
+                        text = res.text
+                        if text and len(text) > 50:
+                            return text
+
+            return "Failed to extract response from Copilot."
+        except Exception as e:
+            return f"Error interacting with Copilot: {e}"
