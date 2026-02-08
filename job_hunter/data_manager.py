@@ -184,37 +184,41 @@ class DataManager:
         if append:
             current = self.load_scouted()
             
-            # --- DEDUPLICATION STRATEGY ---
-            # 1. By Link
-            existing_links = {j.get('link') for j in current if j.get('link')}
-            # 2. By Composite Key (Title-Company) - normalized
-            # storing as tuple: (title.lower(), company.lower())
-            existing_composites = set()
-            for j in current:
-                t = j.get('title', '').strip().lower()
-                c = j.get('company', '').strip().lower()
-                if t and c:
-                    existing_composites.add((t, c))
+            # --- DEDUPLICATION & UPDATE STRATEGY ---
+            link_to_job = {j.get('link'): j for j in current if j.get('link')}
+            comp_to_job = {(j.get('title', '').strip().lower(), j.get('company', '').strip().lower()): j
+                           for j in current if j.get('title') and j.get('company')}
             
             for job in jobs_list:
                 link = job.get('link')
-                
-                # Check 1: Link Existence
-                if link and link in existing_links:
-                    continue # Duplicate by link
-                
-                # Check 2: Composite Existence
                 t_new = job.get('title', '').strip().lower()
                 c_new = job.get('company', '').strip().lower()
-                if (t_new, c_new) in existing_composites:
-                    continue # Duplicate by Title+Company
+                composite = (t_new, c_new) if (t_new and c_new) else None
+
+                existing_job = None
+                if link and link in link_to_job:
+                    existing_job = link_to_job[link]
+                elif composite and composite in comp_to_job:
+                    existing_job = comp_to_job[composite]
+
+                if existing_job:
+                    # Update existing record with new non-empty data
+                    for key, value in job.items():
+                        if value and value not in ["Unknown", "None", None]:
+                            if key in ["rich_description", "language", "is_easy_apply"]:
+                                if key == "rich_description":
+                                    if len(str(value)) > len(str(existing_job.get(key, ""))):
+                                        existing_job[key] = value
+                                else:
+                                    existing_job[key] = value
+                            elif not existing_job.get(key) or existing_job.get(key) == "Unknown":
+                                existing_job[key] = value
+                    continue
                 
                 # If unique, add it
                 current.append(job)
-                
-                # Update tracking sets
-                if link: existing_links.add(link)
-                if t_new and c_new: existing_composites.add((t_new, c_new))
+                if link: link_to_job[link] = job
+                if composite: comp_to_job[composite] = job
 
             final_data = current
         else:

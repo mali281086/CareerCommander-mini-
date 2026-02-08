@@ -462,7 +462,7 @@ def load_data():
     df = df.drop(columns=[c for c in cols_to_drop if c in df.columns], errors='ignore')
     
     # Ensure required columns exist
-    required = ["Job Title", "Company", "Location", "Web Address", "Platform", "Found_job", "Easy Apply"]
+    required = ["Job Title", "Company", "Location", "Web Address", "Platform", "Found_job", "Easy Apply", "Language"]
     for col in required:
         if col not in df.columns:
             if col == "Easy Apply":
@@ -998,7 +998,7 @@ elif st.session_state['page'] == 'explorer':
                 return jid == st.session_state["selected_job_id"]
                 
             # Reorder columns for better visibility
-            cols_to_move = ["Platform", "Easy Apply", "Job Title", "Company", "Found_job", "Location", "Web Address"]
+            cols_to_move = ["Platform", "Easy Apply", "Language", "Job Title", "Company", "Found_job", "Location", "Web Address"]
             remaining_cols = [c for c in display_df.columns if c not in cols_to_move]
             display_df = display_df[cols_to_move + remaining_cols]
 
@@ -1051,7 +1051,7 @@ elif st.session_state['page'] == 'explorer':
                     "Found_job": st.column_config.TextColumn("Target Role", width="medium"), 
                     "Status": st.column_config.TextColumn("Status", width="small"),
                     "description": st.column_config.TextColumn("Original Desc", width="small"), 
-                    "language": st.column_config.TextColumn("Language", width="small"),
+                    "Language": st.column_config.TextColumn("Language", width="small"),
                 }
             
             if "Index" in display_df.columns:
