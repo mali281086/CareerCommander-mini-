@@ -173,13 +173,38 @@ class ContentFetcher:
             elif "stepstone" in p_lower:
                 try:
                     # Description
-                    try:
-                        article = driver.find_element(By.TAG_NAME, "article")
-                        data['description'] = article.text
-                    except:
-                        body = driver.find_element(By.TAG_NAME, "body")
-                        data['description'] = body.text 
-                except: pass
+                    desc_selectors = [
+                        "[data-testid='job-description-content']",
+                        "[data-testid='job-description']",
+                        ".js-app-ld-ContentBlock",
+                        "section.listing-content",
+                        ".job-description",
+                        "article"
+                    ]
+
+                    desc_el = None
+                    for selector in desc_selectors:
+                        try:
+                            el = driver.find_element(By.CSS_SELECTOR, selector)
+                            if el and len(el.text) > 50:
+                                desc_el = el
+                                print(f"[Stepstone] Found description with selector: {selector}")
+                                break
+                        except:
+                            continue
+
+                    if desc_el:
+                        data['description'] = desc_el.text
+                    else:
+                        # Fallback to article or body
+                        try:
+                            article = driver.find_element(By.TAG_NAME, "article")
+                            data['description'] = article.text
+                        except:
+                            body = driver.find_element(By.TAG_NAME, "body")
+                            data['description'] = body.text
+                except Exception as e:
+                    print(f"[Stepstone] Error fetching details: {e}")
             
             # --- ZipRecruiter ---
             elif "zip" in p_lower:

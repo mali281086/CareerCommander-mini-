@@ -755,6 +755,7 @@ if st.session_state['page'] == 'home':
                     platforms_arg = selected_platforms if selected_platforms else ["LinkedIn"]
                     
                     total = len(st.session_state['resumes'])
+                    all_scouted_jobs = []
                     
                     for idx, (role_name, role_data) in enumerate(st.session_state['resumes'].items()):
                         raw_kw = role_data.get("target_keywords", "")
@@ -772,7 +773,7 @@ if st.session_state['page'] == 'home':
                                 status_box.info(f"🚀 [{idx+1}/{total}] Scouting & Analyzing for **{kw}** in **{loc}**...")
                                 
                                 try:
-                                    scout.launch_mission(
+                                    results = scout.launch_mission(
                                          keyword=kw, 
                                          location=loc, 
                                          limit=scrape_limit, 
@@ -781,10 +782,67 @@ if st.session_state['page'] == 'home':
                                          deep_scrape=deep_scrape_toggle,
                                          status_callback=lambda m: status_box.info(f"🚀 [{idx+1}/{total}] {m}")
                                     )
+                                    # Tag results for auto-analysis
+                                    for r in results:
+                                        r['_resume_text'] = role_data.get('text', '')
+                                        r['_role_name'] = role_name
+                                    all_scouted_jobs.extend(results)
                                 except Exception as e: 
                                     st.error(f"Failed for {kw} in {loc}: {e}")
+
+                    # --- AUTOMATED AI ANALYSIS ---
+                    if all_scouted_jobs:
+                        # Deduplicate by Title-Company
+                        unique_jobs = {}
+                        for job in all_scouted_jobs:
+                            jid = f"{job.get('title')}-{job.get('company')}"
+                            if jid not in unique_jobs:
+                                unique_jobs[jid] = job
+
+                        jobs_to_analyze = list(unique_jobs.values())
+                        total_analyze = len(jobs_to_analyze)
+
+                        status_box.info(f"🧠 Starting Automated AI Analysis for {total_analyze} jobs...")
+                        prog_bar = st.progress(0)
+
+                        # Load existing cache to avoid re-analyzing
+                        cache = db.load_cache()
+                        analysis_components = ["intel", "cover_letter", "ats", "resume"]
+
+                        for i, job in enumerate(jobs_to_analyze):
+                            jid = f"{job.get('title')}-{job.get('company')}"
+                            status_box.info(f"🧠 [{i+1}/{total_analyze}] Analyzing: **{job.get('title')}** @ **{job.get('company')}**...")
+
+                            # Skip if already analyzed
+                            if jid in cache:
+                                if jid not in st.session_state['job_cache']:
+                                    st.session_state['job_cache'][jid] = cache[jid]
+                                prog_bar.progress((i + 1) / total_analyze)
+                                continue
+
+                            # Prepare context
+                            scraped_jd = job.get('rich_description') or job.get('description') or ""
+                            if not scraped_jd or len(scraped_jd) < 50:
+                                # Try fetching if missing (though deep_scrape should have done it)
+                                pass
+
+                            if scraped_jd and len(scraped_jd) > 50:
+                                context = f"Title: {job.get('title')}\nCompany: {job.get('company')}\nLoc: {job.get('location')}\nLink: {job.get('link','')}\n\nJOB DESCRIPTION:\n{scraped_jd}"
+
+                                try:
+                                    crew = JobAnalysisCrew(context, job.get('_resume_text', ''))
+                                    results = crew.run_analysis(components=analysis_components, use_browser=use_browser_analysis)
+
+                                    if results and "error" not in results:
+                                        db.save_cache(jid, results)
+                                        # Also update session cache
+                                        st.session_state['job_cache'][jid] = results
+                                except Exception as ae:
+                                    st.error(f"Analysis failed for {jid}: {ae}")
+
+                            prog_bar.progress((i + 1) / total_analyze)
                     
-                    status_box.success("🎉 All Missions Complete (Scraped & Enriched)! Taking you to results...")
+                    status_box.success("🎉 All Missions Complete (Scraped & Analyzed)! Taking you to results...")
                 
                 st.cache_data.clear() # Clear cache to load new data
                 st.session_state['page'] = 'explorer'

@@ -74,10 +74,10 @@ class Scout:
 
             # Save to DB (Single call ensures deep details are saved)
             log("💾 Saving mission results...")
-            saved_data = self.db.save_scouted_jobs(all_results, append=True)
+            self.db.save_scouted_jobs(all_results, append=True)
             log(f"✅ Mission Complete! {len(all_results)} jobs recorded.")
 
-            return saved_data
+            return all_results
             
         finally:
             # Cleanup - Close Browser
