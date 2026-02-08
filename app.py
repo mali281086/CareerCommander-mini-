@@ -760,6 +760,9 @@ if st.session_state['page'] == 'home':
                         raw_kw = role_data.get("target_keywords", "")
                         keywords = [k.strip() for k in raw_kw.split(';') if k.strip()]
                         if not keywords: keywords = [role_name]
+
+                        # Save keywords to history for this resume
+                        db.save_resume_title_history(role_data.get("filename", role_name), keywords)
                         
                         locations = [l.strip() for l in scrape_location.split(';') if l.strip()]
                         if not locations: locations = ["Germany"]

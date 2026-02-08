@@ -51,16 +51,24 @@ class BrowserLLM:
         time.sleep(5)
 
     def close_tab(self):
-        """Closes the tab used for analysis if it's still open."""
-        if self.tab_handle and self.tab_handle in self.driver.window_handles:
-            try:
-                self.driver.switch_to.window(self.tab_handle)
-                self.driver.close()
-                # Switch back to whatever is left
-                if self.driver.window_handles:
-                    self.driver.switch_to.window(self.driver.window_handles[0])
-            except:
-                pass
+        """Closes the tab used for analysis if it's still open.
+        If it's the last tab, it stays open to avoid exiting the browser process."""
+        try:
+            handles = self.driver.window_handles
+            if self.tab_handle and self.tab_handle in handles:
+                if len(handles) > 1:
+                    self.driver.switch_to.window(self.tab_handle)
+                    self.driver.close()
+                    # Switch back to whatever is left
+                    remaining = self.driver.window_handles
+                    if remaining:
+                        self.driver.switch_to.window(remaining[0])
+                else:
+                    # Last tab - leave it open so browser doesn't exit.
+                    # This prevents re-initialization issues during Streamlit reruns.
+                    pass
+        except Exception as e:
+            print(f"Error closing tab: {e}")
 
     def ask(self, prompt, timeout=120):
         """Sends prompt and waits for response."""

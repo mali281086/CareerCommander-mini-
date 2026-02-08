@@ -108,34 +108,33 @@ class JobAnalysisCrew:
                 llm=llm
             )
             task_cl = Task(
-                 description=f"""Write a professional cover letter for this job based on the candidate's resume.
-Job: {self.job_text}
-Resume: {self.resume_text}
+                 description=f"""Write a highly professional, direct, and human-sounding cover letter following this EXACT format:
 
-IMPORTANT REQUIREMENTS:
-1. HEADER: You MUST extract contact details from the resume and format the header EXACTLY like this:
-   [Candidate Name]
-   [City, Country]
-   Email: [Email]
-   Cell: [Phone]
-   LinkedIn: [Link]
-   Github: [Link (if found)]
+FORMAT:
+Subject: Job Application for [Job Title]
 
-2. SUBJECT LINE: Must be exactly "Application for [Job Title] (m/f/d)"
+Dear Hiring Manager,
+I am addressing to show my interest in the vacancy of [Job Title] at [Company]. Having more than [Number] years of experience in [Field], [Specialization 1], and [Specialization 2] in the [Sectors], I would be glad to apply my experience to the mission of [Company] to [Company Mission/Goal].
 
-3. LANGUAGE:
-   - Write strictly in ENGLISH.
-   - You MUST explicitly state: "I possess strong communication skills, with English proficiency at C1 level, and German language skills at B1 level. I am actively learning German to further integrate into the team and better understand the local context and company culture."
+[Paragraph 2: Focus on specific technical achievements related to the JD. Mention specific tools used and quantitative results.]
 
-4. BODY:
-   - Sophisticated, professional intro (Avoid "I am writing to...").
-   - Highlight key matching experience metrics.
-   - Mention motivation for the specific company.
+[Paragraph 3: Focus on knowledge of the sector (e.g., banking/finance) and soft skills like facilitation between business and IT.]
+
+[Paragraph 4: Technical stack summary and language proficiency. MUST state: "I have strong technical skills in [Stack], as well as an organized and analytical work style. My practical proficiency in English (C1 level) and decent proficiency in German (B1 level) are virtues that I constantly improve professionally."]
+
+[Paragraph 5: Closing statement expressing interest in contributing to [Company] and looking forward to the interview.]
+
+STRICT REQUIREMENTS:
+- Use first-person perspective.
+- Avoid robotic "AI-speak" (no "Furthermore", "Moreover", "In conclusion").
+- Ensure the tone is grounded and professional.
+- Job: {self.job_text}
+- Resume: {self.resume_text}
 
 FINAL ANSWER MUST BE JSON with a single key 'cover_letter'.
-Example JSON: {{"cover_letter": "Sheikh Ali Mateen\\nBerlin, Germany\\n..."}}""",
+Example JSON: {{"cover_letter": "Subject: Job Application for...\\n\\nDear Hiring Manager..."}}""",
                  agent=agent_cl,
-                 expected_output='{"cover_letter": "Header... Body..."}'
+                 expected_output='{"cover_letter": "Subject... Dear Hiring Manager..."}'
             )
             agents.append(agent_cl)
             tasks.append(task_cl)
@@ -150,22 +149,20 @@ Example JSON: {{"cover_letter": "Sheikh Ali Mateen\\nBerlin, Germany\\n..."}}"""
                 llm=llm
             )
             task_humanizer = Task(
-                description=f"""Refine the cover letter to achieve a "Natural-Professional" voice that bypasses AI detectors like QuillBot.
+                description=f"""Refine the cover letter to ensure it sounds completely human and follows the requested "Direct-Professional" template.
 
 STRICT HUMANIZATION GUIDELINES:
-1. GREETING: Use "Dear Hiring Team at [Company]" or "Dear [Name]". NEVER use "Esteemed Hiring Team".
-2. TONE: Professional yet grounded. Use first-person perspective to tell a story about achievements.
-3. PHRASING: Use natural verbs like "working on", "digging into", "leading". Avoid robotic buzzwords like "strategic imperative", "core competencies", "spearheaded", or "hallmark".
-4. SENTENCE FLOW: Use a mix of long and short sentences. Allow for natural, professional contractions (e.g., "I'm", "I've") to sound like a real person.
-5. NO AI TRANSITIONS: Ban words like "Furthermore,", "Moreover,", "Additionally,", "Notably,".
-6. OPENING: Start with a direct, professional statement of interest. (Example: "I'm writing to express my strong interest in the [Role] position at [Company].")
-7. PERSONAL TOUCH: Include phrases that show pride or enjoyment in work (Example: "One achievement I'm particularly proud of is...", "What I really enjoy about this work is...").
-8. GERMAN CONTEXT: Keep it respectful and professional, but avoid the stiff "Old-School" robotic style.
+1. GREETING: Must be "Dear Hiring Manager,".
+2. TONE: Avoid flowery language. Use direct sentences.
+3. NO AI TRANSITIONS: Banned words: "Furthermore,", "Moreover,", "Additionally,", "Notably,", "In addition,".
+4. PHRASING: Use natural professional language. Example: "I have worked closely with..." instead of "I have collaborated extensively with...".
+5. FLOW: Ensure the letter feels like a personal address, not a generic template.
+6. SPECIFICITY: Ensure the technical achievements from Paragraph 2 are preserved and sound authentic.
 
 FINAL ANSWER MUST BE JSON with keys 'humanized_cover_letter' and 'humanization_score'.
-Example JSON: {{"humanized_cover_letter": "Dear Hiring Team... I'm writing to...", "humanization_score": 99}}""",
+Example JSON: {{"humanized_cover_letter": "Subject: Job Application... Dear Hiring Manager...", "humanization_score": 98}}""",
                 agent=agent_humanizer,
-                expected_output='{"humanized_cover_letter": "...", "humanization_score": 95}',
+                expected_output='{"humanized_cover_letter": "...", "humanization_score": 98}',
                 context=[task_cl]
             )
             agents.append(agent_humanizer)
@@ -337,7 +334,16 @@ STRICT JSON STRUCTURE REQUIRED:
 }
 
 Specific Instructions:
-- For 'cover_letter': Write a natural, human-sounding letter. Include a header with contact info from my resume. State my English level (C1) and German level (B1). Avoid robotic buzzwords.
+- For 'cover_letter': Write a highly professional, direct cover letter.
+  FORMAT:
+  Subject: Job Application for [Job Title]
+  Dear Hiring Manager,
+  [Direct intro: show interest in [Job Title] at [Company]. Mention years of experience and core fields.]
+  [Paragraph 2: Focus on specific technical achievements and tools.]
+  [Paragraph 3: Knowledge of banking/sectors and soft skills/facilitation.]
+  [Paragraph 4: Technical stack summary. Mention: "I have strong technical skills in [Stack], as well as an organized and analytical work style. My practical proficiency in English (C1 level) and decent proficiency in German (B1 level) are virtues that I constantly improve professionally."]
+  [Paragraph 5: Direct closing.]
+  Use NO AI transitions like "Furthermore" or "Moreover". Keep it grounded.
 - For 'tailored_resume': Focus on rewriting the Experience section to match JD keywords.
 - For 'ats_report': Give an honest match score from 0-100.
 - Output ONLY the JSON object. No conversation.
