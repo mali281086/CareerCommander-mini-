@@ -91,10 +91,23 @@ class BrowserLLM:
                 time.sleep(2)
 
             # Extract last response
-            responses = self.driver.find_elements(By.CSS_SELECTOR, "div[data-message-author-role='assistant']")
-            if responses:
-                return responses[-1].text
-            return "Failed to extract response."
+            # Multiple possible selectors for ChatGPT messages
+            selectors = [
+                "div[data-message-author-role='assistant']",
+                ".markdown.prose",
+                "div.agent-turn"
+            ]
+
+            for selector in selectors:
+                responses = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                if responses:
+                    # Get the very last one
+                    text = responses[-1].text
+                    if text and len(text) > 10:
+                        return text
+
+            # Fallback: find any div with significant text that appeared after our prompt
+            return "Failed to extract response from ChatGPT."
 
         except Exception as e:
             return f"Error interacting with ChatGPT: {e}"
@@ -125,10 +138,21 @@ class BrowserLLM:
                     pass
                 time.sleep(2)
 
-            responses = self.driver.find_elements(By.CSS_SELECTOR, "div.message-content")
-            if responses:
-                return responses[-1].text
-            return "Failed to extract response."
+            # Possible selectors for Gemini
+            selectors = [
+                "div.message-content",
+                "model-response div.content",
+                ".markdown"
+            ]
+
+            for selector in selectors:
+                responses = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                if responses:
+                    text = responses[-1].text
+                    if text and len(text) > 10:
+                        return text
+
+            return "Failed to extract response from Gemini."
         except Exception as e:
             return f"Error interacting with Gemini: {e}"
 

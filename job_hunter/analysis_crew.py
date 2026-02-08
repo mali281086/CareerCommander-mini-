@@ -12,55 +12,58 @@ class JobAnalysisCrew:
 
     def _clean_json(self, text):
         """Helper to extract JSON from LLM output if it includes markdown code blocks or conversational text."""
+        if not text or not isinstance(text, str):
+            return {}
+
         try:
-            # 1. Try finding Markdown code blocks
+            # 1. Try finding Markdown code blocks (most reliable)
             match = re.search(r"```(?:json)?(.*?)```", text, re.DOTALL)
             if match:
-                text = match.group(1).strip()
-                return json.loads(text)
+                inner_text = match.group(1).strip()
+                try:
+                    return json.loads(inner_text)
+                except:
+                    pass # Fall through if code block isn't valid JSON
+
+            # 2. Find the largest valid JSON object by searching for { }
+            # We look for all { and find their matching }
+            starts = [i for i, char in enumerate(text) if char == '{']
             
-            # 2. Heuristic: Find JSON by looking for known keys
-            # This avoids picking up curly braces in the "Thought" chain
-            known_keys = ["mission", "key_facts", "tech_questions", "behavioral_question", "missing_skills", "score", "how_to_ace", "cover_letter", "tailored_resume", "humanized_cover_letter"]
-            best_start = -1
-            
-            for key in known_keys:
-                idx = text.find(f'"{key}"')
-                if idx != -1:
-                    # found a key, look backwards for the opening brace
-                    for i in range(idx, -1, -1):
-                        if text[i] == '{':
-                            best_start = i
-                            break
-                    if best_start != -1:
-                        break
-            
-            if best_start != -1:
-                # We found the start of the likely real JSON object
-                # Now find the matching end
+            # Try from the earliest { to the latest, to find the largest/root object
+            for start in starts:
                 count = 0
-                for i, char in enumerate(text[best_start:], start=best_start):
-                    if char == '{': count += 1
-                    elif char == '}': count -= 1
+                for i in range(start, len(text)):
+                    if text[i] == '{':
+                        count += 1
+                    elif text[i] == '}':
+                        count -= 1
+
                     if count == 0:
-                        return json.loads(text[best_start:i+1])
-            
-            # 3. Fallback to original "find first {" behavior as last resort
-            start_obj = text.find('{')
-            start_arr = text.find('[')
-            
-            if start_obj != -1 and (start_arr == -1 or start_obj < start_arr):
-                 count = 0
-                 for i, char in enumerate(text[start_obj:], start=start_obj):
-                    if char == '{': count += 1
-                    elif char == '}': count -= 1
-                    if count == 0:
-                        return json.loads(text[start_obj:i+1])
+                        # Potential JSON block
+                        potential_json = text[start:i+1]
+                        try:
+                            data = json.loads(potential_json)
+                            # Basic validation: ensure it's a dict and has some expected keys
+                            if isinstance(data, dict):
+                                known_keys = ["company_intel", "cover_letter", "ats_report", "tailored_resume", "mission", "score"]
+                                if any(k in data for k in known_keys):
+                                    return data
+                        except:
+                            pass
+                        break # Move to next start if this one didn't parse or validate
+
+            # 3. Final desperate fallback: find first { and last }
+            start = text.find('{')
+            end = text.rfind('}')
+            if start != -1 and end != -1 and end > start:
+                try:
+                    return json.loads(text[start:end+1])
+                except:
+                    pass
 
             return {}
         except Exception as e:
             print(f"DEBUG: JSON CLEAN FAILED: {e}")
-            print(f"DEBUG: FAIL TEXT: {text}")
             return {}
 
     def run_analysis(self, components=None, use_browser=True):
