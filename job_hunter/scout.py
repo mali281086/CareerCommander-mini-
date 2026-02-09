@@ -66,6 +66,7 @@ class Scout:
                         if details:
                             job["rich_description"] = details.get("description", "")
                             job["language"] = details.get("language", "Unknown")
+                            job["is_easy_apply"] = details.get("is_easy_apply", job.get("is_easy_apply", False))
                             # Update company if found better name
                             if details.get("company") and details.get("company") != job.get("company"):
                                 if "earn up to" not in details.get("company").lower():

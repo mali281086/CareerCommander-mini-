@@ -1150,12 +1150,11 @@ elif st.session_state['page'] == 'explorer':
                          st.toast("No new applied jobs to archive.", icon="ℹ️")
             
             with c_easy:
-                # Count eligible jobs (skip those already applied)
-                apply_platforms = ["LinkedIn", "Xing"]
-                eligible_for_easy = display_df[display_df["Platform"].isin(apply_platforms) & ~display_df["Applied"]]
+                # Count eligible jobs (must be Easy Apply AND not applied)
+                eligible_for_easy = display_df[display_df["Easy Apply"] & ~display_df["Applied"]]
                 eligible_count = len(eligible_for_easy)
                 
-                if st.button(f"🤖 Easy Apply All ({eligible_count} jobs)", type="primary", use_container_width=True, disabled=(eligible_count == 0)):
+                if st.button(f"🤖 Auto Easy Apply All ({eligible_count} jobs)", type="primary", use_container_width=True, disabled=(eligible_count == 0)):
                     st.session_state['show_easy_apply_confirm'] = True
             
             # CONFIRMATION DIALOG

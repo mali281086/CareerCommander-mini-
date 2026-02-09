@@ -96,7 +96,8 @@ class ContentFetcher:
             self._expand_content(driver)
             
             data = {
-                "description": ""
+                "description": "",
+                "is_easy_apply": False
             }
             
             p_lower = platform.lower()
@@ -104,6 +105,15 @@ class ContentFetcher:
             # --- LinkedIn ---
             if "linkedin" in p_lower:
                 try:
+                    # Easy Apply Check
+                    try:
+                        # Check for the Easy Apply button or text
+                        # LinkedIn usually has a 'jobs-apply-button' class or just the text
+                        page_source = driver.page_source.lower()
+                        if "easy apply" in page_source or "einfach bewerben" in page_source:
+                            data["is_easy_apply"] = True
+                    except: pass
+
                     # Description
                     desc_el = None
                     potential_classes = ["jobs-description__content", "job-details-jobs-unified-top-card__primary-description", "job-details"]
@@ -220,6 +230,14 @@ class ContentFetcher:
             # --- Xing ---
             elif "xing" in p_lower:
                 try:
+                    # Easy Apply Check
+                    try:
+                        page_source = driver.page_source.lower()
+                        # "schnellbewerbung" is Xing's Easy Apply
+                        if "schnellbewerbung" in page_source or "easy apply" in page_source:
+                            data["is_easy_apply"] = True
+                    except: pass
+
                     # Company Extraction (Priority)
                     try:
                         # 1. Header Company Name (best)
