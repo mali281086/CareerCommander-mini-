@@ -232,30 +232,27 @@ with st.sidebar:
 
     # --- BOT SETUP (Legacy Login) ---
     with st.expander("🛠️ Bot Setup (Login)", expanded=False):
-        st.caption("Open browser to log in to LinkedIn, Indeed, etc. manually.")
+        st.caption("Open browser to log in to platforms. Ferrari Mode uses separate profiles.")
+
+        profile_to_login = st.selectbox("Select Profile", ["default", "LinkedIn", "Indeed", "Stepstone", "Xing", "ZipRecruiter"])
         
         c_open, c_close = st.columns(2)
         if c_open.button("🔓 Open"):
             from tools.browser_manager import BrowserManager
             bm = BrowserManager()
-            driver = bm.get_driver(headless=False)
-            # Open all platforms in tabs
-            urls = [
-                "https://www.linkedin.com/login",
-                "https://secure.indeed.com/account/login",
-                "https://www.stepstone.de/login",
-                "https://login.xing.com/",
-                "https://www.ziprecruiter.com/login"
-            ]
+            driver = bm.get_driver(headless=False, profile_name=profile_to_login)
             
-            # First tab
-            driver.get(urls[0])
+            urls = {
+                "LinkedIn": "https://www.linkedin.com/login",
+                "Indeed": "https://secure.indeed.com/account/login",
+                "Stepstone": "https://www.stepstone.de/login",
+                "Xing": "https://login.xing.com/",
+                "ZipRecruiter": "https://www.ziprecruiter.com/login",
+                "default": "https://www.google.com"
+            }
             
-            # Others
-            for url in urls[1:]:
-                driver.execute_script(f"window.open('{url}', '_blank');")
-            
-            st.toast("Opened 5 Login Tabs! Please log in to all of them.")
+            driver.get(urls.get(profile_to_login, urls["default"]))
+            st.toast(f"Opened {profile_to_login} profile! Please log in.")
             
         if c_close.button("🔒 Close"):
             from tools.browser_manager import BrowserManager
@@ -809,38 +806,54 @@ if st.session_state['page'] == 'home':
                         cache = db.load_cache()
                         analysis_components = ["intel", "cover_letter", "ats", "resume"]
 
-                        for i, job in enumerate(jobs_to_analyze):
+                        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                        def process_job_analysis(i, job):
                             jid = f"{job.get('title')}-{job.get('company')}"
-                            status_box.info(f"🧠 [{i+1}/{total_analyze}] Analyzing: **{job.get('title')}** @ **{job.get('company')}**...")
 
                             # Skip if already analyzed
                             if jid in cache:
-                                if jid not in st.session_state['job_cache']:
-                                    st.session_state['job_cache'][jid] = cache[jid]
-                                prog_bar.progress((i + 1) / total_analyze)
-                                continue
+                                return jid, "cached", cache[jid]
 
-                            # Prepare context
                             scraped_jd = job.get('rich_description') or job.get('description') or ""
-                            if not scraped_jd or len(scraped_jd) < 50:
-                                # Try fetching if missing (though deep_scrape should have done it)
-                                pass
-
                             if scraped_jd and len(scraped_jd) > 50:
                                 context = f"Title: {job.get('title')}\nCompany: {job.get('company')}\nLoc: {job.get('location')}\nLink: {job.get('link','')}\n\nJOB DESCRIPTION:\n{scraped_jd}"
 
                                 try:
-                                    crew = JobAnalysisCrew(context, job.get('_resume_text', ''))
+                                    # Ferrari: Parallel Crew/Browser Analysis
+                                    # Use a unique profile per concurrent worker if using browser
+                                    worker_profile = f"AI_Worker_{i % max_analysis_workers}" if use_browser_analysis else "default"
+                                    crew = JobAnalysisCrew(context, job.get('_resume_text', ''), profile_name=worker_profile)
                                     results = crew.run_analysis(components=analysis_components, use_browser=use_browser_analysis)
 
                                     if results and "error" not in results:
                                         db.save_cache(jid, results)
-                                        # Also update session cache
-                                        st.session_state['job_cache'][jid] = results
+                                        return jid, "success", results
                                 except Exception as ae:
-                                    st.error(f"Analysis failed for {jid}: {ae}")
+                                    return jid, f"error: {ae}", None
+                            return jid, "no_data", None
 
-                            prog_bar.progress((i + 1) / total_analyze)
+                        # Limit workers to 3 for Browser LLM to stay "Human" and avoid system overload
+                        # If using API, it could be much higher.
+                        max_analysis_workers = 3 if use_browser_analysis else 10
+
+                        with ThreadPoolExecutor(max_workers=max_analysis_workers) as executor:
+                            future_to_job = {executor.submit(process_job_analysis, i, job): (i, job) for i, job in enumerate(jobs_to_analyze)}
+
+                            # Process results in the MAIN THREAD (Streamlit safe)
+                            for i, future in enumerate(as_completed(future_to_job)):
+                                jid, status, results = future.result()
+                                idx, job = future_to_job[future]
+
+                                if "error" in status:
+                                    st.error(f"Analysis failed for {jid}: {status}")
+
+                                # Safe Session State update in main thread
+                                if results and jid not in st.session_state['job_cache']:
+                                    st.session_state['job_cache'][jid] = results
+
+                                status_box.info(f"🧠 [{i+1}/{total_analyze}] Analysis Complete: **{job.get('title')}**")
+                                prog_bar.progress((i + 1) / total_analyze)
                     
                     status_box.success("🎉 All Missions Complete (Scraped & Analyzed)! Taking you to results...")
                 

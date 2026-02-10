@@ -3,12 +3,13 @@ import time
 from tools.browser_manager import BrowserManager
 
 class BaseScraper(ABC):
-    def __init__(self):
+    def __init__(self, profile_name="default"):
         self.browser_manager = BrowserManager()
+        self.profile_name = profile_name
 
     @property
     def driver(self):
-        return self.browser_manager.get_driver()
+        return self.browser_manager.get_driver(profile_name=self.profile_name)
 
     @abstractmethod
     def search(self, keyword, location, limit=10, easy_apply=False):

@@ -11,12 +11,11 @@ from selenium.webdriver.common.action_chains import ActionChains
 from langdetect import detect
 
 class ContentFetcher:
-    def __init__(self):
+    def __init__(self, profile_name="default"):
         self.bm = BrowserManager()
+        self.profile_name = profile_name
         # Use visible browser to avoid detection if possible, or headless if preferred.
-        # User implies visible might be better for manual intervention, but "Fetch Details" implies automation.
-        # We'll use headless=False to be safe with auth/blocks, or reuse existing session.
-        self.driver = self.bm.get_driver(headless=False) 
+        self.driver = self.bm.get_driver(headless=False, profile_name=profile_name)
 
     def _handle_popups(self, driver):
         """Attempts to close popups (like Indeed Google Login) via ESC or Clicks."""
@@ -81,14 +80,18 @@ class ContentFetcher:
         if not job_url or "http" not in job_url:
             return None
 
-        # Reuse existing driver
-        driver = self.bm.get_driver(headless=False)
+        # Reuse existing driver for this profile
+        driver = self.bm.get_driver(headless=False, profile_name=self.profile_name)
         
         try:
             driver.get(job_url)
-            # Randomized sleep to mimic human behavior
-            time.sleep(random.uniform(2, 4))
+            # Optimized "Ferrari" sleep with jitter
+            time.sleep(random.uniform(1.5, 3))
             
+            # Simulate human scroll to trigger lazy loading
+            driver.execute_script("window.scrollBy(0, 400);")
+            time.sleep(0.5)
+
             # Handle Popups (Indeed especially)
             self._handle_popups(driver)
             
@@ -406,4 +409,4 @@ class ContentFetcher:
 
     def close(self):
         """Closes the browser instance explicitly."""
-        self.bm.close_driver()
+        self.bm.close_driver(profile_name=self.profile_name)

@@ -7,6 +7,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from job_hunter.scrapers.base_scraper import BaseScraper
 
 class LinkedInScraper(BaseScraper):
+    def __init__(self, profile_name="default"):
+        super().__init__(profile_name=profile_name)
+
     def search(self, keyword, location, limit=10, easy_apply=False):
         results = []
         # User requested: https://www.linkedin.com/jobs/search/?currentJobId=...&geoId=...&keywords=...&origin=JOBS_HOME_SEARCH_BUTTON

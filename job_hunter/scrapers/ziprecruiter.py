@@ -3,6 +3,9 @@ from selenium.webdriver.common.by import By
 from job_hunter.scrapers.base_scraper import BaseScraper
 
 class ZipRecruiterScraper(BaseScraper):
+    def __init__(self, profile_name="default"):
+        super().__init__(profile_name=profile_name)
+
     def search(self, keyword, location, limit=10, easy_apply=False):
         results = []
         # User requested: https://www.ziprecruiter.de/jobs/search?q=Data+Analyst&l=Germany&lat=&long=&d=

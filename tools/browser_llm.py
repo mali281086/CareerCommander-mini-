@@ -15,15 +15,19 @@ class BrowserLLM:
         "Copilot": "https://copilot.microsoft.com/"
     }
 
-    def __init__(self, provider="ChatGPT"):
+    def __init__(self, provider="ChatGPT", profile_name="default"):
         self.provider = provider if provider in self.PROVIDERS else "ChatGPT"
+        self.profile_name = profile_name
         self.bm = BrowserManager()
-        self.driver = self.bm.get_driver(headless=False)
+        self.driver = self.bm.get_driver(headless=False, profile_name=profile_name)
         self.tab_handle = None
 
     def _ensure_tab(self):
         """Ensure we have a tab open for the provider."""
         url = self.PROVIDERS[self.provider]
+
+        # Ensure we are using the correct driver for this profile
+        self.driver = self.bm.get_driver(headless=False, profile_name=self.profile_name)
 
         # 1. Check if we already have a tab for this provider
         for handle in self.driver.window_handles:

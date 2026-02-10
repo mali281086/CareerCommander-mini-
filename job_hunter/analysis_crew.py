@@ -6,9 +6,10 @@ from crewai import Agent, Task, Crew, Process
 from tools.browser_llm import BrowserLLM
 
 class JobAnalysisCrew:
-    def __init__(self, job_text: str, resume_text: str):
+    def __init__(self, job_text: str, resume_text: str, profile_name: str = "default"):
         self.job_text = job_text
         self.resume_text = resume_text
+        self.profile_name = profile_name
 
     def _clean_json(self, text):
         """Helper to extract JSON from LLM output if it includes markdown code blocks or conversational text."""
@@ -282,11 +283,12 @@ Example JSON: {{"humanized_cover_letter": "Subject: Job Application... Dear Hiri
 
     def run_browser_analysis(self, components):
         """Runs the analysis using a browser-based LLM instead of API."""
-        print(f"[Analysis] Running browser-based analysis for: {components}")
+        print(f"[Analysis] Running browser-based analysis ({self.profile_name}) for: {components}")
 
         # Determine which provider to use (could be a setting, default to ChatGPT)
         provider = os.getenv("BROWSER_LLM_PROVIDER", "ChatGPT")
-        browser_llm = BrowserLLM(provider=provider)
+        # Ferrari: Use thread-specific profile to avoid locks
+        browser_llm = BrowserLLM(provider=provider, profile_name=self.profile_name)
 
         # Construct a combined prompt
         prompt = f"""

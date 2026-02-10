@@ -21,9 +21,10 @@ class JobApplier:
         "solicitud confirmada", "candidatura inviata"
     ]
 
-    def __init__(self, resume_path=None, phone_number=None):
+    def __init__(self, resume_path=None, phone_number=None, profile_name="default"):
         self.bm = BrowserManager()
-        self.driver = self.bm.get_driver(headless=False)  # Always visible for safety
+        self.profile_name = profile_name
+        self.driver = self.bm.get_driver(headless=False, profile_name=profile_name)  # Always visible for safety
         self.resume_path = resume_path
         self.phone_number = phone_number or ""
         self.applied_count = 0
@@ -1791,5 +1792,5 @@ class JobApplier:
 
     def close(self):
         """Clean up browser."""
-        self.bm.close_driver()
+        self.bm.close_driver(profile_name=self.profile_name)
 
