@@ -137,6 +137,14 @@ class ContentFetcher:
             # --- Indeed ---
             elif "indeed" in p_lower:
                 try:
+                    # Easy Apply Check
+                    try:
+                        page_source = driver.page_source.lower()
+                        # Indeed uses "Easily Apply", "Einfach bewerben", "Schnellbewerbung"
+                        if any(phrase in page_source for phrase in ["easily apply", "einfach bewerben", "schnellbewerbung"]):
+                            data["is_easy_apply"] = True
+                    except: pass
+
                     # Wait for page to fully load
                     time.sleep(3)
                     
