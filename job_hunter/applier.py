@@ -916,6 +916,123 @@ class JobApplier:
         return False, "Submit button not found. Check manually.", True
     
     # ==========================================
+    # INDEED EASY APPLY (SCHNELLBEWERBUNG)
+    # ==========================================
+    def is_easy_apply_indeed(self, job_url=None):
+        """Check if an Indeed job has Schnellbewerbung."""
+        if job_url:
+            print(f"[Indeed] Checking Easy Apply: {job_url}")
+            self.driver.get(job_url)
+            self.random_sleep(3, 5)
+
+        # Look for buttons that say "Schnellbewerbung" or "Easily Apply"
+        try:
+            page_source = self.driver.page_source.lower()
+            if any(phrase in page_source for phrase in ["easily apply", "einfach bewerben", "schnellbewerbung"]):
+                return True
+        except: pass
+        return False
+
+    def apply_indeed(self, job_url, skip_detection=False):
+        """Automates Indeed Schnellbewerbung."""
+        if self.applied_count >= self.max_applications:
+            return False, "Max applications reached.", False
+
+        if not skip_detection:
+            if not self.is_easy_apply_indeed(job_url):
+                return False, "Not an Indeed Easy Apply job.", False
+        else:
+            self.driver.get(job_url)
+            self.random_sleep(3, 5)
+
+        # 1. Find and Click Apply Button
+        apply_selectors = [
+            "button.jobsearch-IndeedApplyButton-button",
+            "#indeedApplyButton",
+            "button[class*='IndeedApplyButton']",
+            "//button[contains(., 'Schnellbewerbung')]",
+            "//button[contains(., 'Easily apply')]"
+        ]
+
+        clicked = False
+        for sel in apply_selectors:
+            if sel.startswith("//"):
+                try:
+                    btn = self.driver.find_element(By.XPATH, sel)
+                    btn.click()
+                    clicked = True
+                    break
+                except: continue
+            elif self.click_element(sel, timeout=5):
+                clicked = True
+                break
+
+        if not clicked:
+            return False, "Indeed Apply button not found.", False
+
+        self.random_sleep(3, 5)
+
+        # Indeed often uses an IFRAME for the application form
+        # We need to switch to it if present
+        try:
+            iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+            for iframe in iframes:
+                if "indeed" in (iframe.get_attribute("src") or "").lower():
+                    self.driver.switch_to.frame(iframe)
+                    print("[Indeed] Switched to application iframe.")
+                    break
+        except: pass
+
+        # 2. Fill Fields (Multi-step form)
+        max_steps = 10
+        for step in range(max_steps):
+            self.random_sleep(1, 2)
+
+            # Check for success
+            if "gelungen" in self.driver.page_source.lower() or "submitted" in self.driver.page_source.lower():
+                print("[Indeed] ✓ Application submitted!")
+                self.applied_count += 1
+                self.driver.switch_to.default_content()
+                return True, "Applied!", True
+
+            # Handle Resume
+            if self.resume_path:
+                resume_btn = self.find_element_safe("input[type='file']")
+                if resume_btn:
+                    try:
+                        resume_btn.send_keys(self.resume_path)
+                        print("[Indeed] Uploaded resume.")
+                    except: pass
+
+            # Fill Text Fields
+            inputs = self.driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[type='tel'], textarea")
+            for inp in inputs:
+                try:
+                    if not inp.get_attribute("value"):
+                        # Try to find label
+                        label_text = ""
+                        try:
+                            label = self.driver.find_element(By.CSS_SELECTOR, f"label[for='{inp.get_attribute('id')}']")
+                            label_text = label.text
+                        except: pass
+
+                        answer = self.db.get_answer_for_question(label_text) if label_text else None
+                        if answer:
+                            inp.send_keys(answer)
+                except: pass
+
+            # Click Continue / Submit
+            continue_btn = self.find_element_safe("button[type='submit'], .ia-continue-button, //button[contains(., 'Weiter')]")
+            if continue_btn:
+                continue_btn.click()
+                print(f"[Indeed] Step {step+1} continued.")
+            else:
+                break
+
+        self.driver.switch_to.default_content()
+        return False, "Stopped during form filling.", True
+
+    # ==========================================
     # MAIN APPLY DISPATCHER
     # ==========================================
     def apply(self, job_url, platform, skip_detection=False, job_title="", company="", target_role=None):
@@ -931,6 +1048,8 @@ class JobApplier:
             return self.apply_linkedin(job_url, skip_detection)
         elif "xing" in platform_lower:
             return self.apply_xing(job_url, skip_detection)
+        elif "indeed" in platform_lower:
+            return self.apply_indeed(job_url, skip_detection)
         else:
             return False, f"Platform '{platform}' not supported for auto-apply.", False
     

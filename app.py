@@ -1164,7 +1164,9 @@ elif st.session_state['page'] == 'explorer':
             
             with c_easy:
                 # Count eligible jobs (must be Easy Apply AND not applied)
-                eligible_for_easy = display_df[display_df["Easy Apply"] & ~display_df["Applied"]]
+                # Now including Indeed if marked as Easy Apply
+                apply_platforms = ["LinkedIn", "Xing", "Indeed"]
+                eligible_for_easy = display_df[display_df["Easy Apply"] & ~display_df["Applied"] & display_df["Platform"].isin(apply_platforms)]
                 eligible_count = len(eligible_for_easy)
                 
                 if st.button(f"🤖 Auto Easy Apply All ({eligible_count} jobs)", type="primary", use_container_width=True, disabled=(eligible_count == 0)):
@@ -1177,10 +1179,9 @@ elif st.session_state['page'] == 'explorer':
                 **Are you sure you want to start Easy Apply?**
                 
                 The bot will:
-                1. Open **{eligible_count}** LinkedIn/Xing jobs one by one
-                2. Check if each job has "Easy Apply" option
-                3. If yes → Apply automatically using your resume
-                4. If no → Skip to next job
+                1. Open **{eligible_count}** Easy Apply jobs one by one (LinkedIn, Xing, Indeed)
+                2. Start applying automatically using your selected resume
+                3. Use your saved answers for common questions
                 
                 ⏱️ This may take **{eligible_count * 10 // 60} - {eligible_count * 15 // 60} minutes**
                 """)
@@ -1226,7 +1227,8 @@ elif st.session_state['page'] == 'explorer':
                         status.text(f"🔍 Checking {i+1}/{total}: {title} @ {company}")
                         
                         target_role = job.get("Found_job", "Unknown")
-                        success, message, is_easy = applier.apply(job_url, platform, job_title=title, company=company, target_role=target_role)
+                        # Ferrari Optimization: Skip detection because we already did it in the Deep Scrape phase
+                        success, message, is_easy = applier.apply(job_url, platform, skip_detection=True, job_title=title, company=company, target_role=target_role)
                         
                         if not is_easy:
                             skipped_count += 1

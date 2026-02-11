@@ -10,10 +10,17 @@ class IndeedScraper(BaseScraper):
     def search(self, keyword, location, limit=10, easy_apply=False):
         results = []
         # Indeed URL structure
-        # User requested: https://de.indeed.com/jobs?q=Data%20Analyst&l=Germany&from=searchOnHP
-        base_url = "https://de.indeed.com/jobs?"
+        # Ferrari: Optimize search for Easy Apply if requested
+        if easy_apply:
+            # Using the "schnellbewerbung" filter keyword
+            search_query = f"{keyword} schnellbewerbung"
+            base_url = "https://de.indeed.com/jobs?"
+        else:
+            search_query = keyword
+            base_url = "https://de.indeed.com/jobs?"
+
         params = {
-            "q": keyword,
+            "q": search_query,
             "l": location,
             "from": "searchOnHP"
         }
@@ -62,16 +69,16 @@ class IndeedScraper(BaseScraper):
                     # Check for Easy Apply
                     is_easy = False
                     try:
-                        # Easily apply badge
-                        badge = card.find_element(By.CLASS_NAME, "ialbl") # 'ialbl' is a common class for Indeed Easy Apply
-                        if "apply" in badge.text.lower() or "bewerben" in badge.text.lower():
+                        # Easily apply badge (ialbl is common, but also check data-testid)
+                        badge = card.find_element(By.CSS_SELECTOR, ".ialbl, [data-testid='indeedApply'], .jobCardShelfContainer")
+                        badge_text = badge.text.lower()
+                        if any(phrase in badge_text for phrase in ["apply", "bewerben", "schnellbewerbung"]):
                             is_easy = True
                     except:
-                        try:
-                            # Secondary check for text
-                            if "easily apply" in card.text.lower() or "einfach bewerben" in card.text.lower():
-                                is_easy = True
-                        except: pass
+                        # Secondary check for text in the whole card
+                        card_text = card.text.lower()
+                        if any(phrase in card_text for phrase in ["easily apply", "einfach bewerben", "schnellbewerbung"]):
+                            is_easy = True
 
                     if not any(j['link'] == link for j in results):
                         results.append({
