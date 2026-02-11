@@ -158,6 +158,7 @@ class ContentFetcher:
                         ".jobsearch-JobComponent-description",
                         ".jobsearch-jobDescriptionText",
                         "[data-testid='job-description']",
+                        "[data-testid='jobsearch-JobDescriptionText']",
                         ".job-description"
                     ]
                     
@@ -197,6 +198,7 @@ class ContentFetcher:
                     desc_selectors = [
                         "[data-testid='job-description-content']",
                         "[data-testid='job-description']",
+                        "[data-testing='job-content']",
                         "[class*='JobDescription']",
                         ".js-app-ld-ContentBlock",
                         "section.listing-content",
@@ -233,8 +235,20 @@ class ContentFetcher:
                 try:
                     # Description
                     try:
-                        desc_container = driver.find_element(By.CLASS_NAME, "job_description")
-                        data['description'] = desc_container.text
+                        desc_selectors = [".job_description", "[class*='jobDescription']", "#job_desc"]
+                        desc_el = None
+                        for s in desc_selectors:
+                            try:
+                                el = driver.find_element(By.CSS_SELECTOR, s)
+                                if el and len(el.text) > 50:
+                                    desc_el = el
+                                    break
+                            except: continue
+
+                        if desc_el:
+                            data['description'] = desc_el.text
+                        else:
+                            data['description'] = driver.find_element(By.TAG_NAME, "body").text
                     except:
                         data['description'] = driver.find_element(By.TAG_NAME, "body").text
                 except: pass

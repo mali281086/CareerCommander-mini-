@@ -234,27 +234,29 @@ with st.sidebar:
     # --- BOT SETUP (Login) ---
     with st.expander("🛠️ Bot Setup (Login)", expanded=False):
         st.caption("Open browser to log in to platforms. All logins are stored in the 'default' profile.")
-
-        platform_to_login = st.selectbox("Select Platform", ["LinkedIn", "Indeed", "Stepstone", "Xing", "ZipRecruiter", "Google"])
         
         c_open, c_close = st.columns(2)
-        if c_open.button("🔓 Open Browser"):
+        if c_open.button("🔓 Login in All Platforms"):
             from tools.browser_manager import BrowserManager
             bm = BrowserManager()
             # Everything now uses 'default' profile for stability
             driver = bm.get_driver(headless=False, profile_name="default")
+
+            urls = [
+                "https://www.linkedin.com/login",
+                "https://secure.indeed.com/account/login",
+                "https://www.stepstone.de/login",
+                "https://login.xing.com/",
+                "https://www.ziprecruiter.com/login"
+            ]
             
-            urls = {
-                "LinkedIn": "https://www.linkedin.com/login",
-                "Indeed": "https://secure.indeed.com/account/login",
-                "Stepstone": "https://www.stepstone.de/login",
-                "Xing": "https://login.xing.com/",
-                "ZipRecruiter": "https://www.ziprecruiter.com/login",
-                "Google": "https://www.google.com"
-            }
+            # Open first URL
+            driver.get(urls[0])
+            # Open others in new tabs
+            for url in urls[1:]:
+                driver.execute_script(f"window.open('{url}', '_blank');")
             
-            driver.get(urls.get(platform_to_login, urls["Google"]))
-            st.toast(f"Opened browser for {platform_to_login}! Please log in.")
+            st.toast("Opened browser tabs for all platforms! Please log in.")
             
         if c_close.button("🔒 Close"):
             from tools.browser_manager import BrowserManager
