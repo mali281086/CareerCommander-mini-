@@ -35,60 +35,36 @@ class Scout:
                 status_callback(msg)
 
         try:
-            # Multi-Platform Concurrency (Ferrari Mode)
-            # We use threads to launch search missions in parallel
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-
-            def run_scraper(p_name):
-                # Search results and logs
-                logs = []
-                jobs = []
+            # Sequential Scouting (Normal Mode - to avoid login issues)
+            for p_name in platforms:
                 if p_name in self.scrapers:
-                    logs.append(f"🔍 Scouting {p_name} for '{keyword}'...")
+                    log(f"🔍 Scouting {p_name} for '{keyword}'...")
                     try:
                         res = self.scrapers[p_name].search(keyword, location, limit, easy_apply=easy_apply)
                         for job in res:
                             job["Found_job"] = keyword
-                        jobs.extend(res)
-                        logs.append(f"✅ Found {len(res)} jobs on {p_name}")
+                        all_results.extend(res)
+                        log(f"✅ Found {len(res)} jobs on {p_name}")
                     except Exception as e:
-                        logs.append(f"⚠️ Error checking {p_name}: {e}")
+                        log(f"⚠️ Error checking {p_name}: {e}")
                 else:
-                    logs.append(f"⚠️ Platform {p_name} not implemented.")
-                return jobs, logs
+                    log(f"⚠️ Platform {p_name} not implemented.")
 
-            # Run search missions in parallel (FERRARI MODE)
-            with ThreadPoolExecutor(max_workers=len(platforms)) as executor:
-                future_to_platform = {executor.submit(run_scraper, p): p for p in platforms}
-                for future in as_completed(future_to_platform):
-                    jobs, thread_logs = future.result()
-                    all_results.extend(jobs)
-                    # Display logs in main thread
-                    for msg in thread_logs:
-                        log(msg)
-
-            # Integrated Deep Scrape phase (FERRARI MODE)
+            # Integrated Deep Scrape phase (Sequential)
             if deep_scrape and all_results:
-                log(f"🕵️ Deep Scraping {len(all_results)} jobs ( Ferrari Parallel Mode)...")
+                log(f"🕵️ Deep Scraping {len(all_results)} jobs...")
 
-                # Split jobs by platform to avoid hitting one platform too hard from multiple threads
-                from collections import defaultdict
-                platform_jobs = defaultdict(list)
-                for j in all_results:
-                    p = j.get("platform") or j.get("Platform") or "Unknown"
-                    platform_jobs[p].append(j)
-
-                def deep_scrape_platform(p_name, jobs):
-                    # One fetcher per platform thread with its own profile
-                    fetcher = ContentFetcher(profile_name=p_name)
-                    thread_logs = []
-                    for i, job in enumerate(jobs):
+                # Single fetcher for all jobs to keep it stable
+                fetcher = ContentFetcher(profile_name="default")
+                try:
+                    for i, job in enumerate(all_results):
                         url = job.get("link")
+                        p_name = job.get("platform") or job.get("Platform") or "Unknown"
                         title = job.get("title") or job.get("Job Title")
                         if url:
-                            thread_logs.append(f"  [{p_name}] {i+1}/{len(jobs)} Fetch: {title}")
+                            log(f"  [{i+1}/{len(all_results)}] Fetching {p_name}: {title}")
                             # Add jitter to stay human
-                            time.sleep(random.uniform(1, 3))
+                            time.sleep(random.uniform(2, 4))
                             details = fetcher.fetch_details(url, p_name)
                             if details:
                                 job["rich_description"] = details.get("description", "")
@@ -97,19 +73,8 @@ class Scout:
                                 if details.get("company") and details.get("company") != job.get("company"):
                                     if "earn up to" not in details.get("company").lower():
                                         job["company"] = details.get("company")
+                finally:
                     fetcher.close()
-                    return thread_logs
-
-                # Run deep scrapes for each platform in parallel
-                with ThreadPoolExecutor(max_workers=len(platform_jobs)) as executor:
-                    future_to_platform_ds = {executor.submit(deep_scrape_platform, p, jobs): p for p, jobs in platform_jobs.items()}
-                    for future in as_completed(future_to_platform_ds):
-                        try:
-                            thread_logs = future.result()
-                            for msg in thread_logs:
-                                log(msg)
-                        except Exception as e:
-                            log(f"⚠️ Deep Scrape Thread Error: {e}")
 
             # Save to DB (Single call ensures deep details are saved)
             log("💾 Saving mission results...")
@@ -119,6 +84,6 @@ class Scout:
             return all_results
             
         finally:
-            # Cleanup - Close Browser
-            print("Mission Complete. Closing Browser...")
-            BrowserManager().close_driver()
+            # Cleanup - Close ALL Browsers (Ferrari: ensures no leaks)
+            print("Mission Complete. Force closing all browsers...")
+            BrowserManager().close_all_drivers()

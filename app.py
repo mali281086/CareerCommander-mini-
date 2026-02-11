@@ -833,27 +833,25 @@ if st.session_state['page'] == 'home':
                                     return jid, f"error: {ae}", None
                             return jid, "no_data", None
 
-                        # Limit workers to 3 for Browser LLM to stay "Human" and avoid system overload
-                        # If using API, it could be much higher.
-                        max_analysis_workers = 3 if use_browser_analysis else 10
+                        # Sequential AI Analysis (Normal Mode - to avoid login issues)
+                        for i, job in enumerate(jobs_to_analyze):
+                            jid, status, results = process_job_analysis(i, job)
 
-                        with ThreadPoolExecutor(max_workers=max_analysis_workers) as executor:
-                            future_to_job = {executor.submit(process_job_analysis, i, job): (i, job) for i, job in enumerate(jobs_to_analyze)}
+                            if "error" in status:
+                                st.error(f"Analysis failed for {jid}: {status}")
 
-                            # Process results in the MAIN THREAD (Streamlit safe)
-                            for i, future in enumerate(as_completed(future_to_job)):
-                                jid, status, results = future.result()
-                                idx, job = future_to_job[future]
+                            if results and jid not in st.session_state['job_cache']:
+                                st.session_state['job_cache'][jid] = results
 
-                                if "error" in status:
-                                    st.error(f"Analysis failed for {jid}: {status}")
+                            status_box.info(f"🧠 [{i+1}/{total_analyze}] Analysis Complete: **{job.get('title')}**")
+                            prog_bar.progress((i + 1) / total_analyze)
 
-                                # Safe Session State update in main thread
-                                if results and jid not in st.session_state['job_cache']:
-                                    st.session_state['job_cache'][jid] = results
+                            # Small delay between analyses to keep browser stable
+                            if use_browser_analysis:
+                                time.sleep(random.uniform(2, 4))
 
-                                status_box.info(f"🧠 [{i+1}/{total_analyze}] Analysis Complete: **{job.get('title')}**")
-                                prog_bar.progress((i + 1) / total_analyze)
+                        # Ferrari: Clean up analysis browsers
+                        BrowserManager().close_all_drivers()
                     
                     status_box.success("🎉 All Missions Complete (Scraped & Analyzed)! Taking you to results...")
                 

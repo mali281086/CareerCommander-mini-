@@ -68,11 +68,17 @@ class BrowserLLM:
                     if remaining:
                         self.driver.switch_to.window(remaining[0])
                 else:
-                    # Last tab - leave it open so browser doesn't exit.
-                    # This prevents re-initialization issues during Streamlit reruns.
-                    pass
+                    # Last tab - navigate to about:blank to clear the view but keep process alive
+                    self.driver.get("about:blank")
         except Exception as e:
             print(f"Error closing tab: {e}")
+
+    def quit(self):
+        """FORCE closes the entire browser associated with this LLM instance."""
+        try:
+            self.bm.close_driver(profile_name=self.profile_name)
+        except Exception as e:
+            print(f"Error quitting browser: {e}")
 
     def ask(self, prompt, timeout=120):
         """Sends prompt and waits for response."""

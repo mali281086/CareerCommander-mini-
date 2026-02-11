@@ -197,6 +197,7 @@ class ContentFetcher:
                     desc_selectors = [
                         "[data-testid='job-description-content']",
                         "[data-testid='job-description']",
+                        "[class*='JobDescription']",
                         ".js-app-ld-ContentBlock",
                         "section.listing-content",
                         ".job-description",

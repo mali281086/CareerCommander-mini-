@@ -11,6 +11,9 @@ class BrowserManager:
     _instance = None
     # Thread-local storage for drivers
     _local = threading.local()
+    # Global registry for ALL active drivers across all threads
+    _all_drivers = []
+    _lock = threading.Lock()
 
     def __new__(cls):
         if cls._instance is None:
@@ -18,7 +21,10 @@ class BrowserManager:
         return cls._instance
 
     def get_driver(self, headless=False, profile_name="default"):
-        """Returns a driver for a specific profile."""
+        """Returns a driver. Reverted to mostly using 'default' to avoid login issues."""
+        # Force default profile unless explicitly needed otherwise (Normal Mode)
+        # profile_name = "default" # Let's keep the parameter but default it
+
         # We store drivers in a dict per thread
         if not hasattr(self._local, 'drivers'):
             self._local.drivers = {}
@@ -38,8 +44,7 @@ class BrowserManager:
         
         # Paths
         project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        base_user_data_dir = os.path.join(project_dir, "chrome_data")
-        user_data_dir = os.path.join(base_user_data_dir, profile_name)
+        user_data_dir = os.path.join(project_dir, "chrome_data", profile_name)
         
         if not os.path.exists(user_data_dir):
             os.makedirs(user_data_dir)
@@ -60,11 +65,11 @@ class BrowserManager:
         options.add_argument("--start-maximized")
         options.add_argument("--disable-blink-features=AutomationControlled")
         
-        # Performance Optimizations (Ferrari)
+        # Performance Optimizations
         options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--blink-settings=imagesEnabled=false") # Disable images for speed
+        # options.add_argument("--blink-settings=imagesEnabled=false") # Enabled images back for better stability/human-like
 
         # Exclude automation switches
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
@@ -77,30 +82,58 @@ class BrowserManager:
         try:
             # Selenium 4.6+ manages drivers automatically!
             driver = webdriver.Chrome(options=options)
-            self._driver = driver
-            print(f"Browser launched with profile: {user_data_dir}")
+
+            # Register globally
+            with self._lock:
+                self._all_drivers.append(driver)
+
+            print(f"Browser launched with profile: {user_data_dir} (Total active: {len(self._all_drivers)})")
             return driver
         except Exception as e:
             print(f"Failed to crash browser: {e}")
             raise e
 
     def close_driver(self, profile_name=None):
+        """Closes drivers associated with the current thread."""
         if not hasattr(self._local, 'drivers'):
             return
 
         if profile_name:
             if profile_name in self._local.drivers and self._local.drivers[profile_name]:
+                driver = self._local.drivers[profile_name]
                 try:
-                    self._local.drivers[profile_name].quit()
+                    driver.quit()
+                    with self._lock:
+                        if driver in self._all_drivers:
+                            self._all_drivers.remove(driver)
                 except:
                     pass
                 self._local.drivers[profile_name] = None
         else:
-            # Close all
+            # Close all in THIS thread
             for p in list(self._local.drivers.keys()):
                 if self._local.drivers[p]:
+                    driver = self._local.drivers[p]
                     try:
-                        self._local.drivers[p].quit()
+                        driver.quit()
+                        with self._lock:
+                            if driver in self._all_drivers:
+                                self._all_drivers.remove(driver)
                     except:
                         pass
                     self._local.drivers[p] = None
+
+    def close_all_drivers(self):
+        """FORCE closes EVERY browser opened by any thread."""
+        print(f"Force closing all {len(self._all_drivers)} active drivers...")
+        with self._lock:
+            for driver in list(self._all_drivers):
+                try:
+                    driver.quit()
+                except:
+                    pass
+            self._all_drivers.clear()
+
+        # Also clear thread-local references if we are in a thread that has them
+        if hasattr(self._local, 'drivers'):
+            self._local.drivers = {}
