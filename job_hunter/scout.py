@@ -13,11 +13,11 @@ class Scout:
     def __init__(self):
         self.db = DataManager()
         self.scrapers = {
-            "LinkedIn": LinkedInScraper(profile_name="LinkedIn"),
-            "Indeed": IndeedScraper(profile_name="Indeed"),
-            "Stepstone": StepstoneScraper(profile_name="Stepstone"),
-            "Xing": XingScraper(profile_name="Xing"),
-            "ZipRecruiter": ZipRecruiterScraper(profile_name="ZipRecruiter")
+            "LinkedIn": LinkedInScraper(profile_name="default"),
+            "Indeed": IndeedScraper(profile_name="default"),
+            "Stepstone": StepstoneScraper(profile_name="default"),
+            "Xing": XingScraper(profile_name="default"),
+            "ZipRecruiter": ZipRecruiterScraper(profile_name="default")
         }
 
     def launch_mission(self, keyword, location, limit, platforms, easy_apply=False, deep_scrape=True, status_callback=None):

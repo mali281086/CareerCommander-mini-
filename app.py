@@ -11,6 +11,7 @@ import time
 import random
 from datetime import datetime
 from dotenv import load_dotenv
+from langdetect import detect
 
 # Load other envs
 # Load other envs
@@ -230,17 +231,18 @@ with st.sidebar:
     with col2:
         st.image("Logo.png", width=120)
 
-    # --- BOT SETUP (Legacy Login) ---
+    # --- BOT SETUP (Login) ---
     with st.expander("🛠️ Bot Setup (Login)", expanded=False):
-        st.caption("Open browser to log in to platforms. Ferrari Mode uses separate profiles.")
+        st.caption("Open browser to log in to platforms. All logins are stored in the 'default' profile.")
 
-        profile_to_login = st.selectbox("Select Profile", ["default", "LinkedIn", "Indeed", "Stepstone", "Xing", "ZipRecruiter"])
+        platform_to_login = st.selectbox("Select Platform", ["LinkedIn", "Indeed", "Stepstone", "Xing", "ZipRecruiter", "Google"])
         
         c_open, c_close = st.columns(2)
-        if c_open.button("🔓 Open"):
+        if c_open.button("🔓 Open Browser"):
             from tools.browser_manager import BrowserManager
             bm = BrowserManager()
-            driver = bm.get_driver(headless=False, profile_name=profile_to_login)
+            # Everything now uses 'default' profile for stability
+            driver = bm.get_driver(headless=False, profile_name="default")
             
             urls = {
                 "LinkedIn": "https://www.linkedin.com/login",
@@ -248,11 +250,11 @@ with st.sidebar:
                 "Stepstone": "https://www.stepstone.de/login",
                 "Xing": "https://login.xing.com/",
                 "ZipRecruiter": "https://www.ziprecruiter.com/login",
-                "default": "https://www.google.com"
+                "Google": "https://www.google.com"
             }
             
-            driver.get(urls.get(profile_to_login, urls["default"]))
-            st.toast(f"Opened {profile_to_login} profile! Please log in.")
+            driver.get(urls.get(platform_to_login, urls["Google"]))
+            st.toast(f"Opened browser for {platform_to_login}! Please log in.")
             
         if c_close.button("🔒 Close"):
             from tools.browser_manager import BrowserManager
@@ -806,8 +808,6 @@ if st.session_state['page'] == 'home':
                         cache = db.load_cache()
                         analysis_components = ["intel", "cover_letter", "ats", "resume"]
 
-                        from concurrent.futures import ThreadPoolExecutor, as_completed
-
                         def process_job_analysis(i, job):
                             jid = f"{job.get('title')}-{job.get('company')}"
 
@@ -820,9 +820,8 @@ if st.session_state['page'] == 'home':
                                 context = f"Title: {job.get('title')}\nCompany: {job.get('company')}\nLoc: {job.get('location')}\nLink: {job.get('link','')}\n\nJOB DESCRIPTION:\n{scraped_jd}"
 
                                 try:
-                                    # Ferrari: Parallel Crew/Browser Analysis
-                                    # Use a unique profile per concurrent worker if using browser
-                                    worker_profile = f"AI_Worker_{i % max_analysis_workers}" if use_browser_analysis else "default"
+                                    # Sequential Crew/Browser Analysis (One by One)
+                                    worker_profile = "default"
                                     crew = JobAnalysisCrew(context, job.get('_resume_text', ''), profile_name=worker_profile)
                                     results = crew.run_analysis(components=analysis_components, use_browser=use_browser_analysis)
 
@@ -850,7 +849,7 @@ if st.session_state['page'] == 'home':
                             if use_browser_analysis:
                                 time.sleep(random.uniform(2, 4))
 
-                        # Ferrari: Clean up analysis browsers
+                        # Clean up analysis browsers
                         BrowserManager().close_all_drivers()
                     
                     status_box.success("🎉 All Missions Complete (Scraped & Analyzed)! Taking you to results...")
@@ -952,7 +951,6 @@ elif st.session_state['page'] == 'explorer':
                     if has_desc and not has_lang:
                         status_txt.text(f"Detecting Language {i+1}/{total_fetch}: {job_row.get('Job Title')}")
                         try:
-                           from langdetect import detect
                            txt = str(job_row.get("Rich Description"))
                            detected_lang = detect(txt) if len(txt) > 50 else "en"
                            

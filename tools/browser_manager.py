@@ -21,9 +21,9 @@ class BrowserManager:
         return cls._instance
 
     def get_driver(self, headless=False, profile_name="default"):
-        """Returns a driver. Reverted to mostly using 'default' to avoid login issues."""
-        # Force default profile unless explicitly needed otherwise (Normal Mode)
-        # profile_name = "default" # Let's keep the parameter but default it
+        """Returns a driver. Reverted to always using 'default' to avoid login issues."""
+        # Force default profile for everything (Normal Mode)
+        profile_name = "default"
 
         # We store drivers in a dict per thread
         if not hasattr(self._local, 'drivers'):
