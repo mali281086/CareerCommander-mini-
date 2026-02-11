@@ -1256,6 +1256,11 @@ elif st.session_state['page'] == 'explorer':
                     # RESULTS
                     st.success(f"🎉 **Mazdoori Complete!** Applied: {applied_count} | Skipped: {skipped_count} | Failed: {total - applied_count - skipped_count}")
                     
+                    # Automatically Archive Applied Jobs ( Ferrari Mode: keep UI clean)
+                    if applied_count > 0:
+                        db.archive_applied_jobs()
+                        st.toast(f"Archived {applied_count} applied jobs from current batch. ✅")
+
                     with st.expander("📝 Full Log", expanded=True):
                         for r in results_log:
                             st.write(f"{r['Status']} **{r['Job']}** @ {r['Company']}: {r['Message']}")
