@@ -3,8 +3,7 @@ import time
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-
-
+from selenium_stealth import stealth
 import threading
 
 class BrowserManager:
@@ -54,12 +53,13 @@ class BrowserManager:
 
         # Human-like User Agents
         user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            {"ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "plt": "Win32"},
+            {"ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "plt": "MacIntel"},
+            {"ua": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "plt": "Linux x86_64"}
         ]
         import random
-        options.add_argument(f"user-agent={random.choice(user_agents)}")
+        agent = random.choice(user_agents)
+        options.add_argument(f"user-agent={agent['ua']}")
 
         options.add_argument(f"user-data-dir={user_data_dir}")
         options.add_argument("--start-maximized")
@@ -83,6 +83,16 @@ class BrowserManager:
             # Selenium 4.6+ manages drivers automatically!
             driver = webdriver.Chrome(options=options)
 
+            # Apply Stealth
+            stealth(driver,
+                languages=["en-US", "en"],
+                vendor="Google Inc.",
+                platform=agent['plt'],
+                webgl_vendor="Intel Inc.",
+                renderer="Intel Iris OpenGL Engine",
+                fix_hairline=True,
+            )
+
             # Register globally
             with self._lock:
                 self._all_drivers.append(driver)
@@ -90,7 +100,7 @@ class BrowserManager:
             print(f"Browser launched with profile: {user_data_dir} (Total active: {len(self._all_drivers)})")
             return driver
         except Exception as e:
-            print(f"Failed to crash browser: {e}")
+            print(f"Failed to launch browser: {e}")
             raise e
 
     def close_driver(self, profile_name=None):
