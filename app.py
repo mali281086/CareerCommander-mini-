@@ -244,6 +244,9 @@ with st.sidebar:
             urls = [
                 "https://www.linkedin.com/login",
                 "https://login.xing.com/",
+                "https://secure.indeed.com/account/login",
+                "https://www.stepstone.de/candidate/login",
+                "https://www.ziprecruiter.com/login",
             ]
             
             # Open first URL
