@@ -234,6 +234,27 @@ with st.sidebar:
     # --- BOT SETUP (Login) ---
     with st.expander("🛠️ Bot Setup (Login)", expanded=False):
         st.caption("Open browser to log in to platforms. All logins are stored in the 'default' profile.")
+
+        # --- System Profile Section ---
+        st.markdown("---")
+        st.markdown("#### 🖥️ Use System Chrome Profile")
+        st.caption("Use your real Chrome session to bypass CloudFlare/bot detection. (Close all Chrome windows before running!)")
+
+        sys_user_data = st.text_input("User Data Directory", value=os.getenv("SYSTEM_CHROME_USER_DATA", ""), help="e.g. C:\\Users\\Name\\AppData\\Local\\Google\\Chrome\\User Data")
+        sys_profile = st.text_input("Profile Folder Name", value=os.getenv("SYSTEM_CHROME_PROFILE", "Default"), help="e.g. Default or Profile 1")
+
+        if st.button("💾 Save System Profile Settings"):
+            db.save_browser_config(sys_user_data, sys_profile)
+            st.success("System profile settings saved! Please restart the bot or rerun a mission.")
+            time.sleep(1)
+            st.rerun()
+
+        if sys_user_data and sys_profile:
+            st.info(f"✅ Active: Using {sys_profile} from {sys_user_data}")
+        else:
+            st.warning("⚠️ Using local 'chrome_data' profile. CloudFlare might block you.")
+
+        st.markdown("---")
         
         c_open, c_close = st.columns(2)
         if c_open.button("🔓 Login in All Platforms"):

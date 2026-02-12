@@ -39,14 +39,23 @@ class BrowserManager:
         return self._local.drivers[profile_name]
 
     def _init_driver(self, headless=False, profile_name="default"):
-        print(f"Initializing Browser Profile: {profile_name}...")
+        # Check for system profile override
+        system_user_data = os.getenv("SYSTEM_CHROME_USER_DATA")
+        system_profile = os.getenv("SYSTEM_CHROME_PROFILE")
         
-        # Paths
-        project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        user_data_dir = os.path.join(project_dir, "chrome_data", profile_name)
-        
-        if not os.path.exists(user_data_dir):
-            os.makedirs(user_data_dir)
+        if system_user_data and system_profile:
+            print(f"Using System Chrome Profile: {system_user_data} | {system_profile}")
+            user_data_dir = system_user_data
+            profile_dir = system_profile
+        else:
+            print(f"Initializing Local Browser Profile: {profile_name}...")
+            # Paths
+            project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            user_data_dir = os.path.join(project_dir, "chrome_data", profile_name)
+            profile_dir = "Default"
+
+            if not os.path.exists(user_data_dir):
+                os.makedirs(user_data_dir)
 
         # Options
         options = Options()
@@ -62,6 +71,7 @@ class BrowserManager:
         options.add_argument(f"user-agent={agent['ua']}")
 
         options.add_argument(f"user-data-dir={user_data_dir}")
+        options.add_argument(f"--profile-directory={profile_dir}")
         options.add_argument("--start-maximized")
         options.add_argument("--disable-blink-features=AutomationControlled")
         

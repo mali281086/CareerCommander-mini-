@@ -596,3 +596,16 @@ class DataManager:
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(history, f, indent=2, ensure_ascii=False)
 
+    # --- BROWSER CONFIG ---
+    def save_browser_config(self, user_data_dir, profile_name):
+        from dotenv import set_key
+        env_file = ".env"
+        if not os.path.exists(env_file):
+            with open(env_file, "w") as f: f.write("")
+
+        set_key(env_file, "SYSTEM_CHROME_USER_DATA", user_data_dir)
+        set_key(env_file, "SYSTEM_CHROME_PROFILE", profile_name)
+
+        os.environ["SYSTEM_CHROME_USER_DATA"] = user_data_dir
+        os.environ["SYSTEM_CHROME_PROFILE"] = profile_name
+        return True
