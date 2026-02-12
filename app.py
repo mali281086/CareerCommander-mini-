@@ -213,6 +213,7 @@ from job_hunter.resume_parser import parse_resume
 from job_hunter.career_advisor import CareerAdvisor
 from job_hunter.data_manager import DataManager
 from job_hunter.model_factory import validate_api_key, get_available_models # Factory
+from tools.browser_manager import BrowserManager
 
 # --- Config ---
 # Page Config
@@ -237,7 +238,6 @@ with st.sidebar:
 
         c_open, c_close = st.columns(2)
         if c_open.button("🔓 Open Browser & Login"):
-            from tools.browser_manager import BrowserManager
             bm = BrowserManager()
             driver = bm.get_driver(headless=False, profile_name="default")
 
@@ -255,7 +255,6 @@ with st.sidebar:
             st.toast("✅ Browser opened! Please log in to your accounts, then close this expander.")
             
         if c_close.button("🔒 Close Browser"):
-            from tools.browser_manager import BrowserManager
             BrowserManager().close_driver()
             st.toast("Browser Closed.")
     
