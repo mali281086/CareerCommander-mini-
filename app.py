@@ -13,7 +13,14 @@ from datetime import datetime
 from dotenv import load_dotenv
 from langdetect import detect
 
-# Load other envs
+# Project Imports
+from job_hunter.analysis_crew import JobAnalysisCrew
+from job_hunter.resume_parser import parse_resume
+from job_hunter.career_advisor import CareerAdvisor
+from job_hunter.data_manager import DataManager
+from job_hunter.model_factory import validate_api_key, get_available_models
+from tools.browser_manager import BrowserManager
+
 # Load other envs
 load_dotenv()
 
@@ -207,13 +214,6 @@ def render_metrics_dashboard(current_df, applied_dict, parked_count=0):
         st.info("No application history to show timeline.")
 
     st.divider()
-
-from job_hunter.analysis_crew import JobAnalysisCrew
-from job_hunter.resume_parser import parse_resume
-from job_hunter.career_advisor import CareerAdvisor
-from job_hunter.data_manager import DataManager
-from job_hunter.model_factory import validate_api_key, get_available_models # Factory
-from tools.browser_manager import BrowserManager
 
 # --- Config ---
 # Page Config
