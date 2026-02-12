@@ -39,23 +39,14 @@ class BrowserManager:
         return self._local.drivers[profile_name]
 
     def _init_driver(self, headless=False, profile_name="default"):
-        # Check for system profile override
-        system_user_data = os.getenv("SYSTEM_CHROME_USER_DATA")
-        system_profile = os.getenv("SYSTEM_CHROME_PROFILE")
-        
-        if system_user_data and system_profile:
-            print(f"Using System Chrome Profile: {system_user_data} | {system_profile}")
-            user_data_dir = system_user_data
-            profile_dir = system_profile
-        else:
-            print(f"Initializing Local Browser Profile: {profile_name}...")
-            # Paths
-            project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            user_data_dir = os.path.join(project_dir, "chrome_data", profile_name)
-            profile_dir = "Default"
+        print(f"Initializing Browser Profile: {profile_name}...")
+        # Always use local chrome_data directory (avoids conflicts with running Chrome)
+        project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        user_data_dir = os.path.join(project_dir, "chrome_data", profile_name)
+        profile_dir = "Default"
 
-            if not os.path.exists(user_data_dir):
-                os.makedirs(user_data_dir)
+        if not os.path.exists(user_data_dir):
+            os.makedirs(user_data_dir)
 
         # Options
         options = Options()

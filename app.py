@@ -233,42 +233,17 @@ with st.sidebar:
 
     # --- BOT SETUP (Login) ---
     with st.expander("🛠️ Bot Setup (Login)", expanded=False):
-        st.caption("Open browser to log in to platforms. All logins are stored in the 'default' profile.")
+        st.caption("Open the bot's browser to log into LinkedIn, Xing, etc. Your login session is saved locally in `chrome_data/default`.")
 
-        # --- System Profile Section ---
-        st.markdown("---")
-        st.markdown("#### 🖥️ Use System Chrome Profile")
-        st.caption("Use your real Chrome session to bypass CloudFlare/bot detection. (Close all Chrome windows before running!)")
-
-        sys_user_data = st.text_input("User Data Directory", value=os.getenv("SYSTEM_CHROME_USER_DATA", ""), help="e.g. C:\\Users\\Name\\AppData\\Local\\Google\\Chrome\\User Data")
-        sys_profile = st.text_input("Profile Folder Name", value=os.getenv("SYSTEM_CHROME_PROFILE", "Default"), help="e.g. Default or Profile 1")
-
-        if st.button("💾 Save System Profile Settings"):
-            db.save_browser_config(sys_user_data, sys_profile)
-            st.success("System profile settings saved! Please restart the bot or rerun a mission.")
-            time.sleep(1)
-            st.rerun()
-
-        if sys_user_data and sys_profile:
-            st.info(f"✅ Active: Using {sys_profile} from {sys_user_data}")
-        else:
-            st.warning("⚠️ Using local 'chrome_data' profile. CloudFlare might block you.")
-
-        st.markdown("---")
-        
         c_open, c_close = st.columns(2)
-        if c_open.button("🔓 Login in All Platforms"):
+        if c_open.button("🔓 Open Browser & Login"):
             from tools.browser_manager import BrowserManager
             bm = BrowserManager()
-            # Everything now uses 'default' profile for stability
             driver = bm.get_driver(headless=False, profile_name="default")
 
             urls = [
                 "https://www.linkedin.com/login",
-                "https://secure.indeed.com/account/login",
-                "https://www.stepstone.de/login",
                 "https://login.xing.com/",
-                "https://www.ziprecruiter.com/login"
             ]
             
             # Open first URL
@@ -277,9 +252,9 @@ with st.sidebar:
             for url in urls[1:]:
                 driver.execute_script(f"window.open('{url}', '_blank');")
             
-            st.toast("Opened browser tabs for all platforms! Please log in.")
+            st.toast("✅ Browser opened! Please log in to your accounts, then close this expander.")
             
-        if c_close.button("🔒 Close"):
+        if c_close.button("🔒 Close Browser"):
             from tools.browser_manager import BrowserManager
             BrowserManager().close_driver()
             st.toast("Browser Closed.")
