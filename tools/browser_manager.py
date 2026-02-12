@@ -40,25 +40,35 @@ class BrowserManager:
 
     def _init_driver(self, headless=False, profile_name="default"):
         print(f"Initializing Browser Profile: {profile_name}...")
-        # Always use local chrome_data directory (avoids conflicts with running Chrome)
-        project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        user_data_dir = os.path.join(project_dir, "chrome_data", profile_name)
-        profile_dir = "Default"
 
-        if not os.path.exists(user_data_dir):
-            os.makedirs(user_data_dir)
+        # Check for system-wide Chrome profile overrides
+        system_user_data = os.getenv("SYSTEM_CHROME_USER_DATA")
+        system_profile = os.getenv("SYSTEM_CHROME_PROFILE")
+
+        if system_user_data and os.path.exists(system_user_data):
+            user_data_dir = system_user_data
+            profile_dir = system_profile if system_profile else "Default"
+            print(f"Using System Chrome Profile: {user_data_dir} | {profile_dir}")
+        else:
+            # Fallback: Always use local chrome_data directory
+            project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            user_data_dir = os.path.join(project_dir, "chrome_data", profile_name)
+            profile_dir = "Default"
+            if not os.path.exists(user_data_dir):
+                os.makedirs(user_data_dir)
+            print(f"Using Local Chrome Profile: {user_data_dir}")
 
         # Options
         options = Options()
 
-        # Human-like User Agents
+        # Human-like User Agents - FIXED to avoid session invalidation
         user_agents = [
             {"ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "plt": "Win32"},
             {"ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "plt": "MacIntel"},
             {"ua": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "plt": "Linux x86_64"}
         ]
-        import random
-        agent = random.choice(user_agents)
+        # Use first one consistently for the same session to keep cookies valid
+        agent = user_agents[0]
         options.add_argument(f"user-agent={agent['ua']}")
 
         options.add_argument(f"user-data-dir={user_data_dir}")

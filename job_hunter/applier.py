@@ -224,28 +224,14 @@ class JobApplier:
             # Navigate if detection was skipped
             print(f"[LinkedIn] Navigating to: {job_url}")
             self.driver.get(job_url)
-            self.random_sleep(3, 5)
+            # Ferrari: Shorter wait if we already know it's a valid link
+            self.random_sleep(1.5, 3)
         
         # 1. Find and Click "Easy Apply" Button
-        easy_apply_selectors = [
-            "button.jobs-apply-button",
-            "button[aria-label*='Easy Apply']",
-            ".jobs-apply-button--top-card button",
-            "button.jobs-apply-button--top-card",
-            ".jobs-s-apply button",
-            "div.jobs-apply-button--top-card button",
-            ".jobs-unified-top-card button.jobs-apply-button",
-        ]
+        # Optimized: Use a combined selector for all patterns to find it in one go
+        combined_selector = "button.jobs-apply-button, button[aria-label*='Easy Apply'], .jobs-apply-button--top-card button, button.jobs-apply-button--top-card, .jobs-s-apply button, div.jobs-apply-button--top-card button, .jobs-unified-top-card button.jobs-apply-button"
         
-        clicked = False
-        for selector in easy_apply_selectors:
-            try:
-                if self.click_element(selector, timeout=3):
-                    clicked = True
-                    print(f"[LinkedIn] Clicked Easy Apply button via: {selector}")
-                    break
-            except:
-                continue
+        clicked = self.click_element(combined_selector, timeout=5)
         
         # XPath fallback for clicking
         if not clicked:
@@ -830,23 +816,10 @@ class JobApplier:
             self.random_sleep(3, 5)
         
         # 1. Find and Click Apply Button
-        apply_selectors = [
-            "button[data-testid='apply-button']",
-            "a[data-testid='apply-button']",
-            "button.apply-button",
-            "a.apply-button",
-            "button[data-testid='nls-apply-button']",
-            "a[data-testid='nls-apply-button']",
-            ".apply-button-container button",
-            "div[class*='ApplyButton'] button"
-        ]
+        # Optimized: Combined selector
+        combined_selector = "button[data-testid='apply-button'], a[data-testid='apply-button'], button.apply-button, a.apply-button, button[data-testid='nls-apply-button'], a[data-testid='nls-apply-button'], .apply-button-container button, div[class*='ApplyButton'] button"
         
-        clicked = False
-        for selector in apply_selectors:
-            if self.click_element(selector, timeout=5):
-                clicked = True
-                print("[Xing] Clicked Apply button.")
-                break
+        clicked = self.click_element(combined_selector, timeout=5)
         
         if not clicked:
             # Try XPath for text-based search (EN and DE)
@@ -946,26 +919,20 @@ class JobApplier:
             self.random_sleep(3, 5)
 
         # 1. Find and Click Apply Button
-        apply_selectors = [
-            "button.jobsearch-IndeedApplyButton-button",
-            "#indeedApplyButton",
-            "button[class*='IndeedApplyButton']",
-            "//button[contains(., 'Schnellbewerbung')]",
-            "//button[contains(., 'Easily apply')]"
-        ]
+        # Optimized: Combined selector for non-xpath
+        css_selector = "button.jobsearch-IndeedApplyButton-button, #indeedApplyButton, button[class*='IndeedApplyButton']"
+        clicked = self.click_element(css_selector, timeout=5)
 
-        clicked = False
-        for sel in apply_selectors:
-            if sel.startswith("//"):
+        if not clicked:
+            # Fallback to XPath
+            xpath_selectors = ["//button[contains(., 'Schnellbewerbung')]", "//button[contains(., 'Easily apply')]"]
+            for sel in xpath_selectors:
                 try:
                     btn = self.driver.find_element(By.XPATH, sel)
                     btn.click()
                     clicked = True
                     break
                 except: continue
-            elif self.click_element(sel, timeout=5):
-                clicked = True
-                break
 
         if not clicked:
             return False, "Indeed Apply button not found.", False
