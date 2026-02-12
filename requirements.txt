@@ -7,8 +7,10 @@ pdfplumber
 # Browser Automation
 selenium
 webdriver-manager
+selenium-stealth
 
 # AI & Agents
+langdetect
 crewai
 langchain-google-genai
 google-generativeai
