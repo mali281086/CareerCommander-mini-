@@ -508,20 +508,46 @@ class DataManager:
         return config
     
     def get_answer_for_question(self, question_text):
-        """Find the best matching answer for a question."""
+        """Find the best matching answer for a question with improved matching logic."""
+        import re
         config = self.load_bot_config()
-        q_lower = question_text.lower().strip()
         
-        # Exact match first
-        if q_lower in config["answers"]:
-            return config["answers"][q_lower]
+        def normalize(text):
+            # Remove non-alphanumeric chars and extra spaces
+            return re.sub(r'[^\w\s]', '', text.lower()).strip()
+
+        q_norm = normalize(question_text)
+        if not q_norm: return None
         
-        # Partial match
+        # 1. Exact match on normalized text
         for pattern, answer in config["answers"].items():
-            if pattern in q_lower or q_lower in pattern:
+            if normalize(pattern) == q_norm:
                 return answer
+
+        # 2. Pattern match (if pattern is a subset of question or vice versa)
+        for pattern, answer in config["answers"].items():
+            p_norm = normalize(pattern)
+            if not p_norm: continue
+            if p_norm in q_norm or q_norm in p_norm:
+                return answer
+
+        # 3. Keyword-based matching (significant overlap)
+        q_words = set(q_norm.split())
+        best_match = None
+        max_overlap = 0
+
+        for pattern, answer in config["answers"].items():
+            p_words = set(normalize(pattern).split())
+            if not p_words: continue
+
+            overlap = len(q_words.intersection(p_words))
+            # Require at least 2 words overlap or 100% of pattern words if pattern is short
+            if overlap > max_overlap:
+                if overlap >= 2 or overlap == len(p_words):
+                    max_overlap = overlap
+                    best_match = answer
         
-        return None  # No match found
+        return best_match
     
     def save_qa_answer(self, question_text, answer):
         """Save a question-answer pair to the bot config.

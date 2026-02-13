@@ -144,7 +144,7 @@ class JobApplier:
         """Check if a LinkedIn job has Easy Apply button."""
         print(f"[LinkedIn] Checking Easy Apply: {job_url}")
         self.driver.get(job_url)
-        self.random_sleep(3, 5)  # Wait longer for page to load
+        self.random_sleep(4, 7)  # Wait longer for page to load
         
         # Multiple selector strategies for Easy Apply button
         # 1. CSS Selectors (Classes & Attributes)
@@ -153,6 +153,7 @@ class JobApplier:
             "button[aria-label*='Easy Apply']",
             "button[aria-label*='Simple candidature']",
             "button[aria-label*='Einfach bewerben']", 
+            "button[aria-label*='Einfach Bewerbung']",
             ".jobs-apply-button--top-card button",
             "button.jobs-apply-button--top-card", 
             ".jobs-s-apply button",
@@ -163,6 +164,7 @@ class JobApplier:
             "a.jobs-apply-button",  # New: Anchor tag support
             "a[aria-label*='Easy Apply']",
             "a[aria-label*='Einfach bewerben']", 
+            "a[aria-label*='Einfach Bewerbung']",
         ]
         
         # 2. PROACTIVE CHECK: Already applied?
@@ -195,7 +197,7 @@ class JobApplier:
                       
                       # If it's the generic primary button, REQUIRE "easy" or "apply" text
                       if "artdeco-button--primary" in selector:
-                          if not any(k in btn_text or k in aria for k in ["easy", "apply", "bewerben", "candidature"]):
+                          if not any(k in btn_text or k in aria for k in ["easy", "apply", "bewerben", "bewerbung", "candidature"]):
                               continue
 
                       print(f"[LinkedIn] ✓ Easy Apply detected via CSS: {selector} (Text: {btn_text})")
@@ -206,10 +208,13 @@ class JobApplier:
         xpath_selectors = [
              "//button[.//text()[contains(translate(., 'EASY', 'easy'), 'easy apply')]]", # "Easy Apply" button
              "//a[.//text()[contains(translate(., 'EASY', 'easy'), 'easy apply')]]", # "Easy Apply" link
-             "//button[contains(., 'Easy Apply')]",
-             "//a[contains(., 'Easy Apply')]",
-             "//button[contains(., 'Einfach bewerben')]",
-             "//a[contains(., 'Einfach bewerben')]",
+             "//button[contains(translate(., 'EASY', 'easy'), 'easy apply')]",
+             "//a[contains(translate(., 'EASY', 'easy'), 'easy apply')]",
+             "//button[contains(translate(., 'EINFACH', 'einfach'), 'einfach bewerben')]",
+             "//a[contains(translate(., 'EINFACH', 'einfach'), 'einfach bewerben')]",
+             "//button[contains(translate(., 'EINFACH', 'einfach'), 'einfach bwerbung')]", # Typo fix from possible user input
+             "//button[contains(translate(., 'EINFACH', 'einfach'), 'einfach bewerbung')]",
+             "//a[contains(translate(., 'EINFACH', 'einfach'), 'einfach bewerbung')]",
              "//button[contains(., 'Simple candidature')]",
              "//div[contains(@class, 'jobs-apply-button')]//button",
              "//div[contains(@class, 'jobs-apply-button')]//a",
@@ -227,7 +232,7 @@ class JobApplier:
 
         # XPath fallback - search for any button with Easy Apply text (EN or DE)
         try:
-            easy_xpath = "//button[contains(translate(., 'EASYAPPLY', 'easyapply'), 'easy apply') or contains(@aria-label, 'Easy Apply') or contains(translate(., 'EINFACH', 'einfach'), 'einfach bewerben')]"
+            easy_xpath = "//button[contains(translate(., 'EASYAPPLY', 'easyapply'), 'easy apply') or contains(@aria-label, 'Easy Apply') or contains(translate(., 'EINFACH', 'einfach'), 'einfach bewerben') or contains(translate(., 'EINFACH', 'einfach'), 'einfach bewerbung')]"
             btn = self.driver.find_element(By.XPATH, easy_xpath)
             if btn:
                 print(f"[LinkedIn] ✓ Easy Apply detected via XPath!")
@@ -255,7 +260,9 @@ class JobApplier:
             "bewerbung absenden",
             "lebenslauf senden",
             "auf xing bewerben",
-            "apply on xing"
+            "apply on xing",
+            "einfach bewerben",
+            "einfach bewerbung"
         ]
         
         # Keywords that indicate EXTERNAL APPLY (should skip)
@@ -345,7 +352,7 @@ class JobApplier:
         if skip_detection:
             print(f"[LinkedIn] Navigating to: {job_url}")
             self.driver.get(job_url)
-            self.random_sleep(1.5, 3)
+            self.random_sleep(3, 5) # Increased wait for page load
             
         # 0. Clear Overlays
         self.handle_cookie_banners()
@@ -357,6 +364,7 @@ class JobApplier:
             "button[aria-label*='Easy Apply']",
             "button[aria-label*='Simple candidature']",
             "button[aria-label*='Einfach bewerben']", 
+            "button[aria-label*='Einfach Bewerbung']",
             ".jobs-apply-button--top-card button",
             "button.jobs-apply-button--top-card", 
             ".jobs-s-apply button",
@@ -365,6 +373,8 @@ class JobApplier:
             "button.artdeco-button--primary",
             "a.jobs-apply-button", # New: Anchor tag support
             "a[aria-label*='Easy Apply']",
+            "a[aria-label*='Einfach bewerben']",
+            "a[aria-label*='Einfach Bewerbung']",
         ]
         
         clicked = False
@@ -377,9 +387,10 @@ class JobApplier:
             xpath_queries = [
                 "//button[.//text()[contains(translate(., 'EASY', 'easy'), 'easy apply')]]",
                 "//a[.//text()[contains(translate(., 'EASY', 'easy'), 'easy apply')]]", # New
-                "//button[contains(., 'Easy Apply')]",
-                "//a[contains(., 'Easy Apply')]", # New
-                "//button[contains(., 'Einfach bewerben')]",
+                "//button[contains(translate(., 'EASY', 'easy'), 'easy apply')]",
+                "//a[contains(translate(., 'EASY', 'easy'), 'easy apply')]", # New
+                "//button[contains(translate(., 'EINFACH', 'einfach'), 'einfach bewerben')]",
+                "//button[contains(translate(., 'EINFACH', 'einfach'), 'einfach bewerbung')]",
                 "//button[contains(., 'Simple candidature')]",
                 "//div[contains(@class, 'jobs-apply-button')]//button",
                 "//button[contains(@aria-label, 'Easy Apply')]"
@@ -519,11 +530,28 @@ class JobApplier:
         
         # 3. Handle TEXT INPUTS with labels
         try:
-            form_groups = self.driver.find_elements(By.CSS_SELECTOR, ".fb-dash-form-element, .jobs-easy-apply-form-section__grouping")
+            form_groups = self.driver.find_elements(By.CSS_SELECTOR, ".fb-dash-form-element, .jobs-easy-apply-form-section__grouping, .jobs-easy-apply-form-element")
             for group in form_groups:
                 try:
                     # Find label
-                    label_el = group.find_element(By.CSS_SELECTOR, "label, .fb-dash-form-element__label, span.t-bold")
+                    label_selectors = [
+                        "label",
+                        ".fb-dash-form-element__label",
+                        "span.t-bold",
+                        ".jobs-easy-apply-form-element__label",
+                        "p.artdeco-text-input__label"
+                    ]
+                    label_el = None
+                    for sel in label_selectors:
+                        try:
+                            label_el = group.find_element(By.CSS_SELECTOR, sel)
+                            if label_el and label_el.text.strip():
+                                break
+                        except: continue
+
+                    if not label_el:
+                        continue
+
                     label_text = label_el.text.strip()
                     
                     if not label_text or len(label_text) < 3:
@@ -763,7 +791,7 @@ class JobApplier:
                         try:
                             # Pattern 2: label in parent div
                             parent = select.find_element(By.XPATH, "./ancestor::div[1]")
-                            label_el = parent.find_element(By.CSS_SELECTOR, "label, legend, span.t-bold")
+                            label_el = parent.find_element(By.CSS_SELECTOR, "label, legend, span.t-bold, .fb-dash-form-element__label, .jobs-easy-apply-form-element__label")
                             label_text = label_el.text.strip()
                         except:
                             pass
@@ -844,10 +872,13 @@ class JobApplier:
                 try:
                     # Get the question/legend
                     legend = None
-                    try:
-                        legend = group.find_element(By.CSS_SELECTOR, "legend, span.t-bold, .fb-dash-form-element__label")
-                    except:
-                        pass
+                    legend_selectors = ["legend", "span.t-bold", ".fb-dash-form-element__label", ".jobs-easy-apply-form-element__label"]
+                    for sel in legend_selectors:
+                        try:
+                            legend = group.find_element(By.CSS_SELECTOR, sel)
+                            if legend and legend.text.strip():
+                                break
+                        except: continue
                     
                     question_text = legend.text.strip() if legend else ""
                     if not question_text:
@@ -1058,7 +1089,7 @@ class JobApplier:
         # Look for buttons that say "Schnellbewerbung" or "Easily Apply"
         try:
             page_source = self.driver.page_source.lower()
-            if any(phrase in page_source for phrase in ["easily apply", "einfach bewerben", "schnellbewerbung"]):
+            if any(phrase in page_source for phrase in ["easily apply", "einfach bewerben", "einfach bewerbung", "schnellbewerbung"]):
                 return True
         except: pass
         return False
@@ -1085,7 +1116,12 @@ class JobApplier:
 
         if not clicked:
             # Fallback to XPath
-            xpath_selectors = ["//button[contains(., 'Schnellbewerbung')]", "//button[contains(., 'Easily apply')]"]
+            xpath_selectors = [
+                "//button[contains(., 'Schnellbewerbung')]",
+                "//button[contains(., 'Easily apply')]",
+                "//button[contains(., 'Einfach bewerben')]",
+                "//button[contains(., 'Einfach Bewerbung')]"
+            ]
             for sel in xpath_selectors:
                 try:
                     btn = self.driver.find_element(By.XPATH, sel)
