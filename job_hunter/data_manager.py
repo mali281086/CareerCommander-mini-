@@ -436,10 +436,14 @@ class DataManager:
                 "how many years": "3",
                 "authorized to work": "Yes",
                 "require sponsorship": "No",
+                "visa sponsorship": "No",
                 "willing to relocate": "Yes",
                 "remote work": "Yes",
                 "notice period": "2 weeks",
                 "when can you start": "Immediately",
+                "english proficiency": "Professional working proficiency",
+                "german proficiency": "Limited working proficiency",
+                "highest level of education": "Master's Degree",
             },
             "unknown_questions": []
         }

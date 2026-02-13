@@ -23,7 +23,11 @@ class JobApplier:
         "candidatura inviata", "candidatura enviada", "status della candidatura",
         "sie haben sich beworben", "you applied", "application sent",
         "already applied", "you've applied", "you already applied",
-        "applied on", "applied today", "applied yesterday", "applied 2 days ago"
+        "applied on", "applied today", "applied yesterday", "applied 2 days ago",
+        "bewerbung anzeigen", "view application", "candidatura inviata",
+        "postulazione inviata", "candidatura apresentada",
+        "status ihrer bewerbung", "application status", "bewerbung am",
+        "applied on"
     ]
 
     def __init__(self, resume_path=None, phone_number=None, profile_name="default"):
@@ -176,7 +180,10 @@ class JobApplier:
             ".scaffold-layout__detail",
             ".jobs-details-jobs-unified-top-card",
             ".jobs-unified-top-card",
-            ".jobs-details__main-content"
+            ".jobs-details__main-content",
+            ".jobs-details",
+            ".job-view-layout",
+            "main#main"
         ]
 
         # Extensive list of selectors for the button itself (Include <a> tags)
@@ -185,12 +192,14 @@ class JobApplier:
             "a.jobs-apply-button",
             "button[aria-label*='Easy Apply']",
             "a[aria-label*='Easy Apply']",
-            "button[aria-label*='Einfach bewerben']", 
+            "button[aria-label*='Einfach bewerben']",
             "button[aria-label*='Einfach Bewerbung']",
             "button[aria-label*='Schnellbewerbung']",
             "button[aria-label*='Simple candidature']",
+            "a[aria-label*='Einfach bewerben']",
+            "a[aria-label*='Einfach Bewerbung']",
             ".jobs-apply-button--top-card button",
-            ".jobs-apply-button--top-card",
+            ".jobs-apply-button--top-card a",
             "button.artdeco-button--primary", # Last resort
             "a.artdeco-button--primary",
         ]
@@ -208,11 +217,26 @@ class JobApplier:
                                 aria = (btn.get_attribute("aria-label") or "").lower()
                                 apply_keywords = ["easy", "apply", "bewerben", "bewerbung", "candidature", "schnellbewerbung"]
                                 if any(k in btn_text or k in aria for k in apply_keywords):
-                                    if not any(k in btn_text for k in ["website", "extern", "employer"]):
+                                    if not any(k in btn_text for k in ["website", "extern", "employer", "company site"]):
                                         print(f"[LinkedIn] ✓ Easy Apply detected in {area}")
                                         return True
                     except: continue
             except: continue
+
+        # Global Fallback
+        combined = ", ".join(btn_selectors)
+        try:
+            btns = self.driver.find_elements(By.CSS_SELECTOR, combined)
+            for btn in btns:
+                if btn.is_displayed():
+                    btn_text = btn.text.lower()
+                    aria = (btn.get_attribute("aria-label") or "").lower()
+                    apply_keywords = ["easy", "apply", "bewerben", "bewerbung", "candidature", "schnellbewerbung"]
+                    if any(k in btn_text or k in aria for k in apply_keywords):
+                        if not any(k in btn_text for k in ["website", "extern", "employer", "company site"]):
+                            print(f"[LinkedIn] ✓ Easy Apply detected via Global Fallback")
+                            return True
+        except: pass
 
         print("[LinkedIn] ✗ Not Easy Apply (external apply required)")
         return False
@@ -362,19 +386,26 @@ class JobApplier:
             ".jobs-unified-top-card",
             ".jobs-details__main-content",
             ".jobs-details", # Standalone page container
+            ".job-view-layout",
             "main#main"
         ]
 
         # Extensive list of selectors for the button itself
         btn_selectors = [
             "button.jobs-apply-button",
+            "a.jobs-apply-button",
             "button[aria-label*='Easy Apply']",
+            "a[aria-label*='Easy Apply']",
             "button[aria-label*='Einfach bewerben']", 
             "button[aria-label*='Einfach Bewerbung']",
             "button[aria-label*='Schnellbewerbung']",
             "button[aria-label*='Simple candidature']",
+            "a[aria-label*='Einfach bewerben']",
+            "a[aria-label*='Einfach Bewerbung']",
             ".jobs-apply-button--top-card button",
+            ".jobs-apply-button--top-card a",
             "button.artdeco-button--primary", # Last resort
+            "a.artdeco-button--primary",
         ]
         
         clicked = False
@@ -394,7 +425,7 @@ class JobApplier:
                                 btn_text = btn.text.lower()
                                 aria = (btn.get_attribute("aria-label") or "").lower()
 
-                                apply_keywords = ["easy", "apply", "bewerben", "bewerbung", "candidature", "schnellbewerbung"]
+                                apply_keywords = ["easy", "apply", "bewerben", "bewerbung", "candidature", "schnellbewerbung", "einfach"]
                                 external_keywords = ["website", "arbeitgeber", "extern", "offsite", "company site", "anwenden"]
 
                                 if any(k in btn_text or k in aria for k in apply_keywords):
@@ -418,8 +449,8 @@ class JobApplier:
                     if btn.is_displayed():
                         btn_text = btn.text.lower()
                         aria = (btn.get_attribute("aria-label") or "").lower()
-                        if any(k in btn_text or k in aria for k in ["easy", "apply", "bewerben", "bewerbung", "schnellbewerbung"]):
-                            if not any(k in btn_text for k in ["website", "extern", "employer"]):
+                        if any(k in btn_text or k in aria for k in ["easy", "apply", "bewerben", "bewerbung", "schnellbewerbung", "einfach"]):
+                            if not any(k in btn_text for k in ["website", "extern", "employer", "company site"]):
                                 try: btn.click()
                                 except: self.driver.execute_script("arguments[0].click();", btn)
                                 clicked = True
@@ -579,7 +610,9 @@ class JobApplier:
                         ".fb-dash-form-element__label",
                         "span.t-bold",
                         ".jobs-easy-apply-form-element__label",
-                        "p.artdeco-text-input__label"
+                        "p.artdeco-text-input__label",
+                        "[data-test-form-element-label]",
+                        "span[aria-hidden='true']" # Sometimes used inside labels
                     ]
                     label_el = None
                     for sel in label_selectors:
@@ -607,6 +640,14 @@ class JobApplier:
                     # Try to get answer from config
                     answer = self.db.get_answer_for_question(label_text)
                     
+                    # If answer is None, try looking for the question text in other places
+                    if answer is None:
+                        # Sometimes the label has hidden text or is just an icon
+                        # but there might be a placeholder
+                        placeholder = input_el.get_attribute("placeholder")
+                        if placeholder:
+                            answer = self.db.get_answer_for_question(placeholder)
+
                     if answer is not None and answer != "":
                         input_el.clear()
                         input_el.send_keys(answer)
