@@ -19,7 +19,7 @@ class JobApplier:
         "candidatado", "already applied", "du hast dich beworben",
         "application submitted", "candidature envoyée", "votre candidature a été envoyée",
         "solicitud confirmada", "candidatura inviata", "postulaste",
-        "candidature transmise", "candidatura inviata"
+        "candidature transmise"
     ]
 
     def __init__(self, resume_path=None, phone_number=None, profile_name="default"):
@@ -35,33 +35,10 @@ class JobApplier:
         self.current_company = ""
         self.session_unknown_questions = []  # Track unknown questions for user prompt
         
-        # Ensure debug dir exists
-        import os
-        if not os.path.exists("debug_screenshots"):
-            os.makedirs("debug_screenshots")
-
     @property
     def driver(self):
         """Get current driver from BrowserManager to avoid stale references."""
         return self.bm.get_driver(headless=False, profile_name=self.profile_name)
-    
-    def save_debug_screenshot(self, name_prefix):
-        """Save screenshot and HTML source to debug_screenshots folder."""
-        try:
-            timestamp = time.strftime("%Y%m%d-%H%M%S")
-            base_filename = f"debug_screenshots/{name_prefix}_{timestamp}"
-            
-            # Save Screenshot
-            self.driver.save_screenshot(f"{base_filename}.png")
-            print(f"[Applier] 📸 Saved debug screenshot: {base_filename}.png")
-            
-            # Save HTML Source
-            with open(f"{base_filename}.html", "w", encoding="utf-8") as f:
-                f.write(self.driver.page_source)
-            print(f"[Applier] 📄 Saved debug HTML: {base_filename}.html")
-            
-        except Exception as e:
-            print(f"[Applier] Failed to save debug info: {e}")
 
     def random_sleep(self, min_sec=2, max_sec=5):
         time.sleep(random.uniform(min_sec, max_sec))
@@ -83,7 +60,6 @@ class JobApplier:
                 return True
             except:
                 print(f"[Applier] Failed to click: {selector}")
-                self.save_debug_screenshot(f"failed_click")
                 return False
     
     def find_element_safe(self, selector, by=By.CSS_SELECTOR, timeout=5):
@@ -468,7 +444,6 @@ class JobApplier:
         
         if not clicked:
             print("[LinkedIn] ❌ Easy Apply button not found (Selectors + XPath failed).")
-            self.save_debug_screenshot("missing_button")
             return False, "Easy Apply button not found. May require external apply.", False
         
         self.random_sleep(2, 4)

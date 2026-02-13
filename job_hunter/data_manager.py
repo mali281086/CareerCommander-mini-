@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from datetime import datetime
 
 DATA_DIR = "data"
@@ -509,7 +510,6 @@ class DataManager:
     
     def get_answer_for_question(self, question_text):
         """Find the best matching answer for a question with improved matching logic."""
-        import re
         config = self.load_bot_config()
         
         def normalize(text):
