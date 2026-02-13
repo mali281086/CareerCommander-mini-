@@ -537,22 +537,35 @@ class JobApplier:
             
             # Click Next/Continue
             next_selectors = [
-                "button[aria-label='Continue to next step']",
-                "button[data-easy-apply-next-button]",
-                "footer button.artdeco-button--primary",
-                "button.artdeco-button--primary[type='button']",
+                (By.CSS_SELECTOR, "button[aria-label='Continue to next step']"),
+                (By.CSS_SELECTOR, "button[data-easy-apply-next-button]"),
+                (By.CSS_SELECTOR, "footer button.artdeco-button--primary"),
+                (By.CSS_SELECTOR, "button.artdeco-button--primary[type='button']"),
+                (By.XPATH, "//button[contains(., 'Weiter')]"),
+                (By.XPATH, "//button[contains(., 'Next')]"),
+                (By.XPATH, "//button[contains(., 'Continue')]"),
+                (By.XPATH, "//button[contains(., 'Review')]"),
+                (By.XPATH, "//button[contains(., 'Review your application')]")
             ]
             
             next_clicked = False
-            for selector in next_selectors:
+            for by, selector in next_selectors:
                 try:
-                    btn = self.find_element_safe(selector, timeout=2)
+                    btn = self.find_element_safe(selector, by=by, timeout=2)
                     if btn and btn.is_displayed() and btn.is_enabled():
                         btn_text = btn.text.lower()
-                        # Avoid clicking Submit or Review accidentally
-                        if "submit" in btn_text or "review" in btn_text:
-                            continue
-                        btn.click()
+                        # Avoid clicking Submit accidentally
+                        if "submit" in btn_text or "absenden" in btn_text or "bewerben" in btn_text:
+                             # If it's the submit button, we should have handled it in the Submit section
+                             # But if we are here, we check if it is really just Next/Weiter
+                             if not any(x in btn_text for x in ["next", "weiter", "continue", "fortfahren"]):
+                                 continue
+
+                        try:
+                            btn.click()
+                        except:
+                            self.driver.execute_script("arguments[0].click();", btn)
+
                         next_clicked = True
                         print(f"[LinkedIn] Clicked Next via: {selector}")
                         break

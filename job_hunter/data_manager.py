@@ -444,6 +444,14 @@ class DataManager:
                 "english proficiency": "Professional working proficiency",
                 "german proficiency": "Limited working proficiency",
                 "highest level of education": "Master's Degree",
+                "mobile phone number": "+4917626983236",
+                "phone number": "+4917626983236",
+                "mobile number": "+4917626983236",
+                "email address": "m.ali281086@gmail.com",
+                "first name": "Sheikh Ali",
+                "last name": "Mateen",
+                "full name": "Sheikh Ali Mateen",
+                "city": "Berlin",
             },
             "unknown_questions": []
         }
