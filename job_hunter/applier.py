@@ -13,14 +13,17 @@ class JobApplier:
     
     # List of localized strings indicating a job has already been applied to
     APPLIED_INDICATORS = [
-        "beworben", "applied", "candidature confirmée", "postulado",
+        "beworben", "candidature confirmée", "postulado",
         "bewerbung ansehen", "view application", "solicitud enviada",
         "già candidato", "aanmelding verzonden", "zaplikowano",
         "candidatado", "already applied", "du hast dich beworben",
         "application submitted", "candidature envoyée", "votre candidature a été envoyée",
         "solicitud confirmada", "candidatura inviata", "postulaste",
-        "candidature transmise", "application status", "bewerbung gesendet",
-        "candidatura inviata", "candidatura enviada", "status della candidatura"
+        "candidature transmise", "bewerbung gesendet",
+        "candidatura inviata", "candidatura enviada", "status della candidatura",
+        "sie haben sich beworben", "you applied", "application sent",
+        "already applied", "you've applied", "you already applied",
+        "applied on", "applied today", "applied yesterday", "applied 2 days ago"
     ]
 
     def __init__(self, resume_path=None, phone_number=None, profile_name="default"):
@@ -118,6 +121,39 @@ class JobApplier:
     # ==========================================
     # DETECTION METHODS
     # ==========================================
+    def _is_applied_check(self, text=None):
+        """Internal helper for robust applied status detection."""
+        import re
+        if text is None:
+            # Check source prefix as ultimate fallback
+            text = self.driver.page_source[:3500].lower()
+        else:
+            text = text.lower()
+
+        for indicator in self.APPLIED_INDICATORS:
+            # Use regex to match as whole words or specific phrases
+            # To avoid "Applied Materials" matching "applied"
+            pattern = r'\b' + re.escape(indicator) + r'\b'
+            if re.search(pattern, text):
+                return True, indicator
+
+        # Also check for specific LinkedIn status badges by CSS
+        status_selectors = [
+            ".artdeco-inline-feedback--success",
+            ".jobs-s-apply__application-link",
+            ".jobs-applied-badge",
+            ".hiring-badge--success",
+            ".jobs-details__applied-date"
+        ]
+        for sel in status_selectors:
+            try:
+                el = self.driver.find_element(By.CSS_SELECTOR, sel)
+                if el.is_displayed() and len(el.text.strip()) > 0:
+                    return True, f"CSS:{sel}"
+            except: pass
+
+        return False, None
+
     def is_easy_apply_linkedin(self, job_url=None):
         """Check if a LinkedIn job has Easy Apply button."""
         if job_url:
@@ -125,131 +161,53 @@ class JobApplier:
             self.driver.get(job_url)
             self.random_sleep(4, 7)  # Wait longer for page to load
         
-        # Multiple selector strategies for Easy Apply button
-        # 1. CSS Selectors (Classes & Attributes)
-        easy_apply_selectors = [
+        # 1. Check for "Already Applied" first
+        is_applied, indicator = self._is_applied_check()
+        if is_applied:
+            print(f"[LinkedIn] ⏭️ Job already applied (detected via {indicator}).")
+            return False
+
+        # 2. Find Easy Apply Button
+        # Prioritize buttons in the detail area to avoid clicking sidebar jobs
+        detail_areas = [
+            ".jobs-search__job-details",
+            ".scaffold-layout__detail",
+            ".jobs-details-jobs-unified-top-card",
+            ".jobs-unified-top-card",
+            ".jobs-details__main-content"
+        ]
+
+        # Extensive list of selectors for the button itself
+        btn_selectors = [
             "button.jobs-apply-button",
             "button[aria-label*='Easy Apply']",
-            "button[aria-label*='Simple candidature']",
             "button[aria-label*='Einfach bewerben']", 
             "button[aria-label*='Einfach Bewerbung']",
+            "button[aria-label*='Schnellbewerbung']",
+            "button[aria-label*='Simple candidature']",
             ".jobs-apply-button--top-card button",
-            "button.jobs-apply-button--top-card", 
-            ".jobs-s-apply button",
-            "div.jobs-apply-button--top-card button", 
-            ".jobs-unified-top-card button.jobs-apply-button",
-            "button.artdeco-button--primary",
-            "div.jobs-umbrella-manager__button button",
-            "a.jobs-apply-button",  # New: Anchor tag support
-            "a[aria-label*='Easy Apply']",
-            "a[aria-label*='Einfach bewerben']", 
-            "a[aria-label*='Einfach Bewerbung']",
-            "button[data-control-name='job_apply']",
+            "button.artdeco-button--primary", # Last resort
         ]
         
-        # 2. PROACTIVE CHECK: Already applied?
-        # Check only the top card area for applied status to avoid false positives in job description
-        try:
-            top_card_selectors = [
-                ".jobs-unified-top-card",
-                ".job-details-jobs-unified-top-card__content--two-pane",
-                ".jobs-details__main-content",
-                ".jobs-search__job-details",
-                ".scaffold-layout__detail",
-                ".jobs-details__top-card"
-            ]
+        for area in detail_areas:
+            try:
+                detail_el = self.driver.find_element(By.CSS_SELECTOR, area)
+                if not detail_el.is_displayed(): continue
+                for sel in btn_selectors:
+                    try:
+                        btns = detail_el.find_elements(By.CSS_SELECTOR, sel)
+                        for btn in btns:
+                            if btn.is_displayed():
+                                btn_text = btn.text.lower()
+                                aria = (btn.get_attribute("aria-label") or "").lower()
+                                apply_keywords = ["easy", "apply", "bewerben", "bewerbung", "candidature", "schnellbewerbung"]
+                                if any(k in btn_text or k in aria for k in apply_keywords):
+                                    if not any(k in btn_text for k in ["website", "extern", "employer"]):
+                                        print(f"[LinkedIn] ✓ Easy Apply detected in {area}")
+                                        return True
+                    except: continue
+            except: continue
 
-            top_card = None
-            for sel in top_card_selectors:
-                try:
-                    top_card = self.driver.find_element(By.CSS_SELECTOR, sel)
-                    if top_card: break
-                except: continue
-
-            if top_card:
-                top_card_text = top_card.text.lower()
-                if any(ind in top_card_text for ind in self.APPLIED_INDICATORS):
-                    print(f"[LinkedIn] ⏭️ Job already applied (detected in top card).")
-                    return False
-            else:
-                # Fallback: check only the first 2000 chars of source (usually contains top card)
-                # This avoids picking up "applied" from the middle of a long description
-                source_start = self.driver.page_source[:2000].lower()
-                if any(ind in source_start for ind in self.APPLIED_INDICATORS):
-                    print(f"[LinkedIn] ⏭️ Job already applied (detected in source prefix).")
-                    return False
-        except: pass
-
-        # 3. Check CSS Selectors
-        for selector in easy_apply_selectors:
-             try:
-                 # Skip generic selectors that might match "Message" button
-                 if "artdeco-button--primary" in selector and "jobs-apply-button" not in selector:
-                     continue 
-                     
-                 btn = self.driver.find_element(By.CSS_SELECTOR, selector)
-                 if btn.is_displayed():
-                      # Double check text for generic buttons if needed
-                      btn_text = btn.text.lower()
-                      aria = (btn.get_attribute("aria-label") or "").lower()
-                      
-                      # If it's the generic primary button, REQUIRE "easy" or "apply" text
-                      if "artdeco-button--primary" in selector:
-                          if not any(k in btn_text or k in aria for k in ["easy", "apply", "bewerben", "bewerbung", "candidature"]):
-                              continue
-
-                      print(f"[LinkedIn] ✓ Easy Apply detected via CSS: {selector} (Text: {btn_text})")
-                      return True
-             except: pass
-
-        # 4. Check XPath (Text Content - Robust Fallback)
-        # Use full alphabet for translate to be truly case-insensitive
-        lc = "'abcdefghijklmnopqrstuvwxyzäöü'"
-        uc = "'ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜ'"
-
-        xpath_selectors = [
-             f"//button[.//text()[contains(translate(., {uc}, {lc}), 'easy apply')]]", # "Easy Apply" button
-             f"//a[.//text()[contains(translate(., {uc}, {lc}), 'easy apply')]]", # "Easy Apply" link
-             f"//button[contains(translate(., {uc}, {lc}), 'easy apply')]",
-             f"//a[contains(translate(., {uc}, {lc}), 'easy apply')]",
-             f"//button[contains(translate(., {uc}, {lc}), 'einfach bewerben')]",
-             f"//a[contains(translate(., {uc}, {lc}), 'einfach bewerben')]",
-             f"//button[contains(translate(., {uc}, {lc}), 'einfach bewerbung')]",
-             f"//a[contains(translate(., {uc}, {lc}), 'einfach bewerbung')]",
-             f"//button[contains(translate(., {uc}, {lc}), 'simple candidature')]",
-             "//div[contains(@class, 'jobs-apply-button')]//button",
-             "//div[contains(@class, 'jobs-apply-button')]//a",
-        ]
-
-        for xpath in xpath_selectors:
-             try:
-                 btn = self.driver.find_element(By.XPATH, xpath)
-                 if btn.is_displayed():
-                     print(f"[LinkedIn] ✓ Easy Apply detected via XPath: {xpath}")
-                     return True
-             except: pass
-
-
-
-        # XPath fallback - search for any button with Easy Apply text (EN or DE)
-        try:
-            # More robust XPath that covers common variations
-            easy_xpath = (
-                "//button["
-                "contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'easy apply') or "
-                "contains(translate(@aria-label, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'easy apply') or "
-                "contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'einfach bewerben') or "
-                "contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'einfach bewerbung') or "
-                "contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'schnellbewerbung')"
-                "]"
-            )
-            btn = self.driver.find_element(By.XPATH, easy_xpath)
-            if btn and btn.is_displayed():
-                print(f"[LinkedIn] ✓ Easy Apply detected via Robust XPath!")
-                return True
-        except:
-            pass
-        
         print("[LinkedIn] ✗ Not Easy Apply (external apply required)")
         return False
     
@@ -352,46 +310,30 @@ class JobApplier:
         if self.applied_count >= self.max_applications:
             return False, "Max applications reached for this session.", False
         
-        # 1. Navigation
+        # 1. Navigation & Sanitization
+        if "currentJobId=" in job_url:
+            import urllib.parse as urlparse
+            try:
+                parsed = urlparse.urlparse(job_url)
+                params = urlparse.parse_qs(parsed.query)
+                job_id = params.get('currentJobId', [None])[0]
+                if job_id: job_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
+            except: pass
+
         print(f"[LinkedIn] Navigating to: {job_url}")
         self.driver.get(job_url)
-        self.random_sleep(4, 6) # Give it time to load
+        self.random_sleep(6, 9) # Give it plenty of time to load and redirect
+        self.handle_cookie_banners()
 
-        # 2. Check for "Already Applied" first - ALWAYS
-        try:
-            top_card_selectors = [
-                ".jobs-unified-top-card",
-                ".job-details-jobs-unified-top-card__content--two-pane",
-                ".jobs-details__main-content",
-                ".jobs-search__job-details",
-                ".scaffold-layout__detail",
-                ".jobs-details__top-card"
-            ]
-
-            top_card = None
-            for sel in top_card_selectors:
-                try:
-                    top_card = self.driver.find_element(By.CSS_SELECTOR, sel)
-                    if top_card and top_card.is_displayed(): break
-                except: continue
-
-            if top_card:
-                top_card_text = top_card.text.lower()
-                if any(ind in top_card_text for ind in self.APPLIED_INDICATORS):
-                    print(f"[LinkedIn] ⏭️ Job already applied (detected in top card).")
-                    return False, "Already applied.", False
-            else:
-                # Fallback check prefix
-                source_start = self.driver.page_source[:3000].lower()
-                if any(ind in source_start for ind in self.APPLIED_INDICATORS):
-                    print(f"[LinkedIn] ⏭️ Job already applied (detected in source prefix).")
-                    return False, "Already applied.", False
-        except Exception as e:
-            print(f"[LinkedIn] Error checking applied status: {e}")
+        # 2. Check for "Already Applied" first
+        is_applied, indicator = self._is_applied_check()
+        if is_applied:
+            print(f"[LinkedIn] ⏭️ Job already applied (detected via {indicator}).")
+            # Return success=True so the loop marks it as applied in the UI and moves on
+            return True, "Already applied.", True
 
         # 3. Detection step (unless skipped)
         if not skip_detection:
-            # We already navigated, so call without job_url
             is_easy = self.is_easy_apply_linkedin()
             if not is_easy:
                 return False, "Not an Easy Apply job. Skipped.", False
@@ -400,53 +342,90 @@ class JobApplier:
         self.handle_cookie_banners()
         
         # 1. Find and Click "Easy Apply" Button
-        # Extensive list of selectors
-        selectors = [
+        # Prioritize buttons in the detail area to avoid clicking sidebar jobs
+        detail_areas = [
+            ".jobs-search__job-details",
+            ".scaffold-layout__detail",
+            ".jobs-details-jobs-unified-top-card",
+            ".jobs-unified-top-card",
+            ".jobs-details__main-content"
+        ]
+
+        # Extensive list of selectors for the button itself
+        btn_selectors = [
             "button.jobs-apply-button",
             "button[aria-label*='Easy Apply']",
-            "button[aria-label*='Simple candidature']",
             "button[aria-label*='Einfach bewerben']", 
             "button[aria-label*='Einfach Bewerbung']",
             "button[aria-label*='Schnellbewerbung']",
+            "button[aria-label*='Simple candidature']",
             ".jobs-apply-button--top-card button",
-            "button.jobs-apply-button--top-card", 
-            ".jobs-s-apply button",
-            "div.jobs-apply-button--top-card button", 
-            ".jobs-unified-top-card button.jobs-apply-button",
-            "button.artdeco-button--primary",
-            "a.jobs-apply-button", # New: Anchor tag support
-            "a[aria-label*='Easy Apply']",
-            "a[aria-label*='Einfach bewerben']",
-            "a[aria-label*='Einfach Bewerbung']",
-            "button[data-control-name='job_apply']",
+            "button.artdeco-button--primary", # Last resort
         ]
         
         clicked = False
-        # Try CSS first
-        combined_selector = ", ".join(selectors)
-        clicked = self.click_element(combined_selector, timeout=5)
         
-        # XPath and Icon fallback
+        # Strategy A: Try to find the button INSIDE the detail area first
+        for area in detail_areas:
+            try:
+                detail_el = self.driver.find_element(By.CSS_SELECTOR, area)
+                if not detail_el.is_displayed(): continue
+
+                for sel in btn_selectors:
+                    try:
+                        btns = detail_el.find_elements(By.CSS_SELECTOR, sel)
+                        for btn in btns:
+                            if btn.is_displayed():
+                                # Check text to avoid "Visit Website" / External apply
+                                btn_text = btn.text.lower()
+                                aria = (btn.get_attribute("aria-label") or "").lower()
+
+                                apply_keywords = ["easy", "apply", "bewerben", "bewerbung", "candidature", "schnellbewerbung"]
+                                external_keywords = ["website", "arbeitgeber", "extern", "offsite", "company site", "anwenden"]
+
+                                if any(k in btn_text or k in aria for k in apply_keywords):
+                                    if not any(k in btn_text for k in external_keywords):
+                                        try: btn.click()
+                                        except: self.driver.execute_script("arguments[0].click();", btn)
+                                        clicked = True
+                                        print(f"[LinkedIn] Clicked Easy Apply in Detail Area ({area}) -> {sel}")
+                                        break
+                        if clicked: break
+                    except: continue
+                if clicked: break
+            except: continue
+
+        # Strategy B: Global CSS fallback
+        if not clicked:
+            combined = ", ".join(btn_selectors)
+            try:
+                btns = self.driver.find_elements(By.CSS_SELECTOR, combined)
+                for btn in btns:
+                    if btn.is_displayed():
+                        btn_text = btn.text.lower()
+                        if any(k in btn_text for k in ["easy", "apply", "bewerben", "bewerbung"]):
+                            try: btn.click()
+                            except: self.driver.execute_script("arguments[0].click();", btn)
+                            clicked = True
+                            print(f"[LinkedIn] Clicked Easy Apply via Global CSS")
+                            break
+            except: pass
+
+        # Strategy C: XPath fallback
         if not clicked:
             lc = "'abcdefghijklmnopqrstuvwxyzäöü'"
             uc = "'ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜ'"
             xpath_queries = [
-                f"//button[.//text()[contains(translate(., {uc}, {lc}), 'easy apply')]]",
-                f"//a[.//text()[contains(translate(., {uc}, {lc}), 'easy apply')]]",
                 f"//button[contains(translate(., {uc}, {lc}), 'easy apply')]",
-                f"//a[contains(translate(., {uc}, {lc}), 'easy apply')]",
                 f"//button[contains(translate(., {uc}, {lc}), 'einfach bewerben')]",
                 f"//button[contains(translate(., {uc}, {lc}), 'einfach bewerbung')]",
-                f"//button[contains(translate(., {uc}, {lc}), 'simple candidature')]",
-                "//div[contains(@class, 'jobs-apply-button')]//button",
-                "//button[contains(@aria-label, 'Easy Apply')]"
+                f"//button[contains(translate(., {uc}, {lc}), 'schnellbewerbung')]"
             ]
             
             for xpath in xpath_queries:
                 try:
                     btn = self.driver.find_element(By.XPATH, xpath)
                     if btn and btn.is_displayed():
-                        # JS Click for safety
                         self.driver.execute_script("arguments[0].click();", btn)
                         clicked = True
                         print(f"[LinkedIn] Clicked Easy Apply via XPath: {xpath}")
@@ -1387,9 +1366,10 @@ class JobApplier:
                     # Quick check if already applied on card text
                     try:
                         card_text = card.text.lower()
-                        if any(ind in card_text for ind in self.APPLIED_INDICATORS):
-                            log(f"   ⏭️ Already applied (via card text)")
-                            results["skipped"].append({"title": "Unknown", "company": "Unknown", "reason": "Already applied"})
+                        is_applied, indicator = self._is_applied_check(card_text)
+                        if is_applied:
+                            log(f"   ⏭️ Already applied (via card text: {indicator})")
+                            results["skipped"].append({"title": "Unknown", "company": "Unknown", "reason": f"Already applied ({indicator})"})
                             continue
                     except:
                         pass
@@ -1458,18 +1438,10 @@ class JobApplier:
                             # Wait slightly for text to populate (Async React)
                             time.sleep(1.5)
                             
-                            found_applied = False
-                            panel_text = detail_panel.text.lower()
-                            
-                            # Check indicators
-                            for indicator in self.APPLIED_INDICATORS:
-                                if indicator in panel_text:
-                                    found_applied = True
-                                    break
-
-                            if found_applied:
-                                log(f"   ⏭️ Already applied (detected preference in details)")
-                                results["skipped"].append({"title": title, "company": company, "reason": "Already applied"})
+                            is_applied, indicator = self._is_applied_check(detail_panel.text)
+                            if is_applied:
+                                log(f"   ⏭️ Already applied (detected in details: {indicator})")
+                                results["skipped"].append({"title": title, "company": company, "reason": f"Already applied ({indicator})"})
                                 continue
                     except: pass
                     
