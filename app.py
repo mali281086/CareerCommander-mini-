@@ -1228,7 +1228,8 @@ elif st.session_state['page'] == 'explorer':
                         
                         if not is_easy:
                             skipped_count += 1
-                            results_log.append({"Job": title, "Company": company, "Status": "⏭️ Skipped", "Message": "Not Easy Apply"})
+                            msg = message if "already applied" in message.lower() else "Not Easy Apply"
+                            results_log.append({"Job": title, "Company": company, "Status": "⏭️ Skipped", "Message": msg})
                         elif success:
                             applied_count += 1
                             results_log.append({"Job": title, "Company": company, "Status": "✅ Applied", "Message": message})
