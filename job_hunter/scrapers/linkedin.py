@@ -76,8 +76,25 @@ class LinkedInScraper(BaseScraper):
                         company = company_elem.text.strip()
                         link = link_elem.get_attribute("href")
                         
-                        # Clean link (remove query params for storage)
-                        if "?" in link: link = link.split("?")[0]
+                        # Better Link Handling for LinkedIn:
+                        # 1. Try to get job ID from card attribute (most reliable)
+                        job_id = card.get_attribute("data-job-id") or card.get_attribute("data-occludable-job-id")
+
+                        # 2. Try to get job ID from link if attribute missing
+                        if not job_id and link:
+                            # Matches /jobs/view/12345 or /jobs/search/?currentJobId=12345
+                            if "/view/" in link:
+                                job_id = link.split("/view/")[1].split("/")[0].split("?")[0]
+                            elif "currentJobId=" in link:
+                                job_id = link.split("currentJobId=")[1].split("&")[0]
+
+                        if job_id:
+                            # Standardize to direct view link
+                            link = f"https://www.linkedin.com/jobs/view/{job_id}/"
+                        else:
+                            # Fallback: Clean link (remove query params for storage) but ONLY if it's a direct view link
+                            if link and "/jobs/view/" in link and "?" in link:
+                                link = link.split("?")[0]
                         
                         # Check for Easy Apply Badge
                         is_easy = False

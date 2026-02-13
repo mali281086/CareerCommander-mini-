@@ -18,7 +18,8 @@ class JobApplier:
         "già candidato", "aanmelding verzonden", "zaplikowano",
         "candidatado", "already applied", "du hast dich beworben",
         "application submitted", "candidature envoyée", "votre candidature a été envoyée",
-        "solicitud confirmada", "candidatura inviata"
+        "solicitud confirmada", "candidatura inviata", "postulaste",
+        "candidature transmise", "candidatura inviata"
     ]
 
     def __init__(self, resume_path=None, phone_number=None, profile_name="default"):
@@ -177,7 +178,8 @@ class JobApplier:
                 ".job-details-jobs-unified-top-card__content--two-pane",
                 ".jobs-details__main-content",
                 ".jobs-search__job-details",
-                ".scaffold-layout__detail"
+                ".scaffold-layout__detail",
+                ".jobs-details__top-card"
             ]
 
             top_card = None
@@ -376,7 +378,8 @@ class JobApplier:
                 ".job-details-jobs-unified-top-card__content--two-pane",
                 ".jobs-details__main-content",
                 ".jobs-search__job-details",
-                ".scaffold-layout__detail"
+                ".scaffold-layout__detail",
+                ".jobs-details__top-card"
             ]
 
             top_card = None
