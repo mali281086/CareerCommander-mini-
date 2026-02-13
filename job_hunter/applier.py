@@ -19,7 +19,8 @@ class JobApplier:
         "candidatado", "already applied", "du hast dich beworben",
         "application submitted", "candidature envoyée", "votre candidature a été envoyée",
         "solicitud confirmada", "candidatura inviata", "postulaste",
-        "candidature transmise"
+        "candidature transmise", "application status", "bewerbung gesendet",
+        "candidatura inviata", "candidatura enviada", "status della candidatura"
     ]
 
     def __init__(self, resume_path=None, phone_number=None, profile_name="default"):
@@ -232,10 +233,19 @@ class JobApplier:
 
         # XPath fallback - search for any button with Easy Apply text (EN or DE)
         try:
-            easy_xpath = "//button[contains(translate(., 'EASYAPPLY', 'easyapply'), 'easy apply') or contains(@aria-label, 'Easy Apply') or contains(translate(., 'EINFACH', 'einfach'), 'einfach bewerben') or contains(translate(., 'EINFACH', 'einfach'), 'einfach bewerbung')]"
+            # More robust XPath that covers common variations
+            easy_xpath = (
+                "//button["
+                "contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'easy apply') or "
+                "contains(translate(@aria-label, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'easy apply') or "
+                "contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'einfach bewerben') or "
+                "contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'einfach bewerbung') or "
+                "contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'schnellbewerbung')"
+                "]"
+            )
             btn = self.driver.find_element(By.XPATH, easy_xpath)
-            if btn:
-                print(f"[LinkedIn] ✓ Easy Apply detected via XPath!")
+            if btn and btn.is_displayed():
+                print(f"[LinkedIn] ✓ Easy Apply detected via Robust XPath!")
                 return True
         except:
             pass
@@ -397,6 +407,7 @@ class JobApplier:
             "button[aria-label*='Simple candidature']",
             "button[aria-label*='Einfach bewerben']", 
             "button[aria-label*='Einfach Bewerbung']",
+            "button[aria-label*='Schnellbewerbung']",
             ".jobs-apply-button--top-card button",
             "button.jobs-apply-button--top-card", 
             ".jobs-s-apply button",
