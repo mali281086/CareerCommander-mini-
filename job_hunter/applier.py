@@ -699,10 +699,10 @@ class JobApplier:
                         
                         # Questions that can be answered with N/A or empty
                         skip_questions = [
-                            "website", "personal website", "portfolio",
+                            "website", "webseite", "personal website", "portfolio",
                             "linkedin profile", "linkedin",
-                            "employee's name", "employee name", "referral",
-                            "referred by", "who referred"
+                            "employee's name", "mitarbeitername", "employee name", "referral",
+                            "referred by", "empfehlung", "wer hat sie empfohlen", "who referred"
                         ]
                         
                         for skip_q in skip_questions:
@@ -912,8 +912,8 @@ class JobApplier:
                     self.db.log_unknown_question(label_text, self.current_job_title, self.current_company)
                     
                     # Smart selection: prefer higher values, avoid "Gar nicht", "Keine", "0"
-                    negative_terms = ['gar nicht', 'keine', 'kein', 'never', 'none', 'not at all', '0 ']
-                    prefer_terms = ['5+', '10+', '3+', '4+', 'more than', 'über', 'ja', 'yes', 'expert', 'erfahren', 'native', 'bilingual', 'immer', 'always']
+                    negative_terms = ['gar nicht', 'keine', 'kein', 'nicht', 'nein', 'überhaupt nicht', 'never', 'none', 'not at all', '0 ']
+                    prefer_terms = ['5+', '10+', '3+', '4+', 'more than', 'über', 'ja', 'yes', 'expert', 'erfahren', 'native', 'muttersprache', 'fließend', 'bilingual', 'immer', 'always']
                     
                     selected = False
                     # First try to find a preferred option
@@ -989,7 +989,7 @@ class JobApplier:
 
                         if not options_found:
                             # Smart selection: prefer "Ja/Yes" over "Nein/No"
-                            yes_labels = ['ja', 'yes', 'agree', 'willing', 'immer']
+                            yes_labels = ['ja', 'yes', 'agree', 'willing', 'immer', 'einverstanden', 'bereit', 'zustimmen']
                             for radio in radios:
                                 try:
                                     label_el = radio.find_element(By.XPATH, "./following-sibling::label | ../label")
@@ -1024,7 +1024,7 @@ class JobApplier:
                                     break
                         
                         if not btn_clicked:
-                            yes_labels = ['ja', 'yes', 'agree', 'willing', 'immer']
+                            yes_labels = ['ja', 'yes', 'agree', 'willing', 'immer', 'einverstanden', 'bereit', 'zustimmen']
                             for btn in buttons:
                                 if any(y in btn.text.lower() for y in yes_labels):
                                     btn.click()
@@ -1546,65 +1546,88 @@ class JobApplier:
                         pass
                     
                     # Check if this is an EXTERNAL apply job (not Easy Apply)
+                    # Use a broader set of external indicators
+                    is_external = False
                     try:
-                        external_btn = self.driver.find_element(By.XPATH, 
-                            "//button[contains(text(), 'Anwenden')] | //a[contains(text(), 'Anwenden')] | //span[text()='Anwenden']/ancestor::button")
-                        if external_btn and external_btn.is_displayed():
-                            log(f"   ⚠️ External apply job detected (filter might have dropped). Re-verifying Easy Apply filter...")
-                            if self._ensure_linkedin_easy_apply_filter():
-                                log("   ♻️ Filter re-applied. Skipping this job as it was likely a leftover.")
+                        # Common labels for external apply buttons in EN/DE/FR/ES
+                        external_labels = ["Anwenden", "Apply", "Bewerben", "Postuler", "Solicitar", "Candidatarsi"]
+                        for label in external_labels:
+                            try:
+                                btn = self.driver.find_element(By.XPATH, f"//button[contains(., '{label}')] | //a[contains(., '{label}')]")
+                                if btn and btn.is_displayed():
+                                    # Double check it is NOT Easy Apply
+                                    txt = btn.text.lower()
+                                    if "easy" not in txt and "einfach" not in txt and "schnell" not in txt:
+                                        is_external = True
+                                        break
+                            except: continue
+                    except: pass
 
-                            results["skipped"].append({"title": title, "company": company, "reason": "External apply"})
-                            continue
-                    except:
-                        pass  # Not external - continue to Easy Apply
+                    if is_external:
+                        log(f"   ⚠️ External apply job detected. Skipping...")
+                        results["skipped"].append({"title": title, "company": company, "reason": "External apply"})
+                        continue
                     
                     # Find Easy Apply button (Robust)
                     easy_apply_btn = None
                     
-                    # 1. CSS Selectors (Synced with is_easy_apply_linkedin)
-                    css_selectors = [
-                        "button.jobs-apply-button",
-                        "a.jobs-apply-button", 
-                        "button[aria-label*='Easy Apply']",
-                        "a[aria-label*='Easy Apply']",
-                        "button[aria-label*='Einfach bewerben']",
-                        "a[aria-label*='Einfach bewerben']",
-                        ".jobs-apply-button--top-card button",
-                        "div.jobs-apply-button--top-card button"
-                    ]
+                    # Strategy A: Use the existing logic from is_easy_apply_linkedin
+                    # but localized to the current side panel
+                    try:
+                        detail_panel = self.find_element_safe(".jobs-search__job-details, .scaffold-layout__detail", timeout=2)
+                        if detail_panel:
+                            # Search for button with apply keywords
+                            # These selectors match what we use in apply_linkedin
+                            apply_selectors = [
+                                "button.jobs-apply-button", "a.jobs-apply-button",
+                                "button[aria-label*='Easy Apply']", "button[aria-label*='Einfach bewerben']",
+                                "button[aria-label*='Einfach Bewerbung']", "button[aria-label*='Schnellbewerbung']"
+                            ]
+                            for sel in apply_selectors:
+                                try:
+                                    btns = detail_panel.find_elements(By.CSS_SELECTOR, sel)
+                                    for b in btns:
+                                        if b.is_displayed():
+                                            easy_apply_btn = b
+                                            break
+                                    if easy_apply_btn: break
+                                except: continue
+                    except: pass
                     
-                    for sel in css_selectors:
-                        try:
-                            btn_cand = self.driver.find_element(By.CSS_SELECTOR, sel)
-                            if btn_cand and btn_cand.is_displayed():
-                                easy_apply_btn = btn_cand
-                                break
-                        except: pass
-                    
-                    # 2. XPath Fallback (If CSS failed)
+                    # Strategy B: Global CSS fallback (from apply_linkedin)
                     if not easy_apply_btn:
-                        xpaths = [
-                             "//button[.//text()[contains(translate(., 'EASY', 'easy'), 'easy apply')]]",
-                             "//a[.//text()[contains(translate(., 'EASY', 'easy'), 'easy apply')]]",
-                             "//button[contains(., 'Easy Apply')]",
-                             "//a[contains(., 'Easy Apply')]",
-                             "//button[contains(., 'Einfach bewerben')]",
-                             "//button[contains(., 'Simple candidature')]"
+                        btn_selectors = [
+                            "button.jobs-apply-button", "a.jobs-apply-button",
+                            "button[aria-label*='Easy Apply']", "a[aria-label*='Easy Apply']",
+                            "button.artdeco-button--primary"
                         ]
-                        for xp in xpaths:
+                        for sel in btn_selectors:
                             try:
-                                btn_cand = self.driver.find_element(By.XPATH, xp)
-                                if btn_cand and btn_cand.is_displayed():
-                                    easy_apply_btn = btn_cand
+                                btns = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                                for b in btns:
+                                    if b.is_displayed():
+                                        txt = b.text.lower()
+                                        if any(k in txt for k in ["easy", "apply", "bewerben", "bewerbung", "schnellbewerbung", "einfach"]):
+                                            if not any(k in txt for k in ["website", "extern", "employer", "company site"]):
+                                                easy_apply_btn = b
+                                                break
+                                if easy_apply_btn: break
+                            except: continue
+
+                    # Strategy C: XPath fallback
+                    if not easy_apply_btn:
+                        xpath_queries = [
+                            "//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'easy apply')]",
+                            "//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'einfach bewerben')]",
+                            "//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'schnellbewerbung')]"
+                        ]
+                        for xpath in xpath_queries:
+                            try:
+                                btn = self.driver.find_element(By.XPATH, xpath)
+                                if btn and btn.is_displayed():
+                                    easy_apply_btn = btn
                                     break
                             except: pass
-                        
-                    if easy_apply_btn:
-                        pass # Found!
-                    else:
-                        # No button check end
-                        pass
                     
                     if not easy_apply_btn:
                         log(f"   ⚠️ Easy Apply button not found (may be external)")
