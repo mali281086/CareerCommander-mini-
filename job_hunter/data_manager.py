@@ -434,6 +434,7 @@ class DataManager:
             "answers": {
                 "years of experience": "3",
                 "how many years": "3",
+                "work experience": "5",
                 "authorized to work": "Yes",
                 "require sponsorship": "No",
                 "visa sponsorship": "No",
@@ -452,6 +453,12 @@ class DataManager:
                 "last name": "Mateen",
                 "full name": "Sheikh Ali Mateen",
                 "city": "Berlin",
+                "country": "Germany",
+                "gender": "Decline to Self-Identify",
+                "disability": "No, I do not have a disability",
+                "veteran": "No, I am not a protected veteran",
+                "ethnicity": "Decline to Self-Identify",
+                "race": "Decline to Self-Identify",
             },
             "unknown_questions": []
         }

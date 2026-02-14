@@ -485,112 +485,14 @@ class JobApplier:
         
         self.random_sleep(2, 4)
         
-        # 2. Process the Modal Steps
-        max_steps = 15  # Safety limit
-        step = 0
+        # 2. Process the Modal Steps (Unified Logic)
+        success = self._process_linkedin_modal()
         
-        while step < max_steps:
-            step += 1
-            print(f"[LinkedIn] Processing step {step}...")
-            self.random_sleep(1, 2)
-            
-            # Check for Submit button first (means we're done)
-            submit_selectors = [
-                "button[aria-label='Submit application']",
-                "button[aria-label*='Submit']",
-                "footer button[aria-label*='Submit']",
-                "button.artdeco-button--primary[aria-label*='Submit']",
-            ]
-            
-            for sel in submit_selectors:
-                submit_btn = self.find_element_safe(sel, timeout=2)
-                if submit_btn:
-                    try:
-                        submit_btn.click()
-                        self.random_sleep(2, 3)
-                        self.applied_count += 1
-                        print("[LinkedIn] ✓ Application submitted!")
-                        return True, "Application submitted successfully!", True
-                    except Exception as e:
-                        print(f"[LinkedIn] Submit click failed: {e}")
-            
-            # Check for Review button
-            review_selectors = [
-                "button[aria-label='Review your application']",
-                "button[aria-label*='Review']",
-                "footer button[aria-label*='Review']",
-            ]
-            
-            for sel in review_selectors:
-                review_btn = self.find_element_safe(sel, timeout=1)
-                if review_btn:
-                    try:
-                        review_btn.click()
-                        print("[LinkedIn] Clicked Review button")
-                        self.random_sleep(1, 2)
-                        break
-                    except:
-                        pass
-            
-            # Handle common fields
-            self._linkedin_fill_fields()
-            
-            # Click Next/Continue
-            next_selectors = [
-                (By.CSS_SELECTOR, "button[aria-label='Continue to next step']"),
-                (By.CSS_SELECTOR, "button[data-easy-apply-next-button]"),
-                (By.CSS_SELECTOR, "footer button.artdeco-button--primary"),
-                (By.CSS_SELECTOR, "button.artdeco-button--primary[type='button']"),
-                (By.XPATH, "//button[contains(., 'Weiter')]"),
-                (By.XPATH, "//button[contains(., 'Next')]"),
-                (By.XPATH, "//button[contains(., 'Continue')]"),
-                (By.XPATH, "//button[contains(., 'Review')]"),
-                (By.XPATH, "//button[contains(., 'Review your application')]")
-            ]
-            
-            next_clicked = False
-            for by, selector in next_selectors:
-                try:
-                    btn = self.find_element_safe(selector, by=by, timeout=2)
-                    if btn and btn.is_displayed() and btn.is_enabled():
-                        btn_text = btn.text.lower()
-                        # Avoid clicking Submit accidentally
-                        if "submit" in btn_text or "absenden" in btn_text or "bewerben" in btn_text:
-                             # If it's the submit button, we should have handled it in the Submit section
-                             # But if we are here, we check if it is really just Next/Weiter
-                             if not any(x in btn_text for x in ["next", "weiter", "continue", "fortfahren"]):
-                                 continue
-
-                        try:
-                            btn.click()
-                        except:
-                            self.driver.execute_script("arguments[0].click();", btn)
-
-                        next_clicked = True
-                        print(f"[LinkedIn] Clicked Next via: {selector}")
-                        break
-                except:
-                    continue
-            
-            if not next_clicked:
-                # Check for error messages
-                error_msg = self.find_element_safe(".artdeco-inline-feedback--error", timeout=1)
-                if error_msg:
-                    print(f"[LinkedIn] Error on form: {error_msg.text}")
-                    
-                # Check for dismiss/close
-                close_btn = self.find_element_safe("button[aria-label='Dismiss']", timeout=2)
-                if close_btn:
-                    close_btn.click()
-                    return False, "Got stuck. Modal dismissed.", True
-                    
-                # Maybe application was already submitted?
-                if step > 5:
-                    return False, "Unable to proceed. Check manually.", True
-            
-            self.random_sleep(2, 3)
-        
-        return False, "Exceeded max steps. Check manually.", True
+        if success:
+            self.applied_count += 1
+            return True, "Application submitted successfully!", True
+        else:
+            return False, "Failed to complete application modal or dismissed due to errors.", True
     
     def _linkedin_fill_fields(self):
         """Fill common fields in LinkedIn Easy Apply modal with smart question detection."""
@@ -612,9 +514,9 @@ class JobApplier:
                 except Exception as e:
                     print(f"[LinkedIn] Resume upload failed: {e}")
         
-        # 3. Handle TEXT INPUTS with labels
+        # 3. Handle TEXT INPUTS and COMBOBOXES with labels
         try:
-            form_groups = self.driver.find_elements(By.CSS_SELECTOR, ".fb-dash-form-element, .jobs-easy-apply-form-section__grouping, .jobs-easy-apply-form-element")
+            form_groups = self.driver.find_elements(By.CSS_SELECTOR, ".fb-dash-form-element, .jobs-easy-apply-form-section__grouping, .jobs-easy-apply-form-element, .jobs-easy-apply-form-section__group")
             for group in form_groups:
                 try:
                     # Find label
@@ -625,14 +527,18 @@ class JobApplier:
                         ".jobs-easy-apply-form-element__label",
                         "p.artdeco-text-input__label",
                         "[data-test-form-element-label]",
-                        "span[aria-hidden='true']" # Sometimes used inside labels
+                        "span[aria-hidden='true']",
+                        "h3"
                     ]
                     label_el = None
                     for sel in label_selectors:
                         try:
-                            label_el = group.find_element(By.CSS_SELECTOR, sel)
-                            if label_el and label_el.text.strip():
-                                break
+                            labels = group.find_elements(By.CSS_SELECTOR, sel)
+                            for l in labels:
+                                if l.is_displayed() and l.text.strip():
+                                    label_el = l
+                                    break
+                            if label_el: break
                         except: continue
 
                     if not label_el:
@@ -640,29 +546,45 @@ class JobApplier:
 
                     label_text = label_el.text.strip()
                     
-                    if not label_text or len(label_text) < 3:
+                    if not label_text or len(label_text) < 2:
                         continue
                     
-                    # Find input
-                    input_el = group.find_element(By.CSS_SELECTOR, "input[type='text'], input[type='number'], input:not([type='file']):not([type='radio']):not([type='checkbox'])")
+                    # Find input or combobox
+                    input_el = None
+                    try:
+                        input_el = group.find_element(By.CSS_SELECTOR, "input[type='text'], input[type='number'], input[type='tel'], input:not([type='file']):not([type='radio']):not([type='checkbox']), [role='combobox'] input")
+                    except:
+                        try: input_el = group.find_element(By.TAG_NAME, "textarea")
+                        except: pass
                     
-                    # Skip if already filled
-                    if input_el.get_attribute("value"):
-                        continue
+                    if not input_el: continue
+
+                    # Skip if already filled (but check if it's just a default placeholder)
+                    current_val = input_el.get_attribute("value")
+                    if current_val and len(current_val.strip()) > 0:
+                        # Optional: Allow overwriting if it matches a "Select" or "Choose" pattern
+                        if not any(x in current_val.lower() for x in ["select", "choose", "auswählen"]):
+                            continue
                     
                     # Try to get answer from config
                     answer = self.db.get_answer_for_question(label_text)
                     
-                    # If answer is None, try looking for the question text in other places
+                    # Fallback: Check placeholder
                     if answer is None:
-                        # Sometimes the label has hidden text or is just an icon
-                        # but there might be a placeholder
                         placeholder = input_el.get_attribute("placeholder")
                         if placeholder:
                             answer = self.db.get_answer_for_question(placeholder)
 
                     if answer is not None and answer != "":
-                        input_el.clear()
+                        # Clear and type
+                        try:
+                            input_el.clear()
+                        except:
+                            # If clear fails, try select all + backspace
+                            from selenium.webdriver.common.keys import Keys
+                            input_el.send_keys(Keys.CONTROL + "a")
+                            input_el.send_keys(Keys.BACKSPACE)
+
                         input_el.send_keys(answer)
                         print(f"[LinkedIn] Answered '{label_text}' → '{answer}'")
 
@@ -1704,188 +1626,130 @@ class JobApplier:
     def _process_linkedin_modal(self):
         """
         Process the LinkedIn Easy Apply modal and submit application.
-        Based on EAB patterns: loop until submit button text found, use primary button class.
+        Robustly handles multiple steps, form filling, and localized buttons.
         """
         max_steps = 15
-        # German + English submit button texts
+
+        # Expanded localized submit/next button texts
         submit_texts = [
             'submit application', 'bewerbung senden', 'absenden', 
-            'submit', 'senden', 'abschicken', 'bewerben'
+            'submit', 'senden', 'abschicken', 'bewerben', 'postuler',
+            'finalizar', 'enviar'
         ]
-        # German + English next/continue button texts (for recognition, not action)
-        next_button_texts = [
-            'next', 'weiter', 'further', 'continue', 'fortfahren',
-            'review', 'überprüfen', 'prüfen', 'nächster', 'nächste'
-        ]
-        had_errors = False  # Track if we encountered errors
-        consecutive_errors = 0  # Track consecutive validation errors
+
+        had_errors = False
+        consecutive_errors = 0
         last_step_with_error = -1
         
         for step in range(max_steps):
-            self.random_sleep(1.0, 2.0)
+            self.random_sleep(1.5, 2.5)
             
-            # Check for success message first
+            # 1. Check for success indicators
             try:
-                success_indicators = [
-                    "//*[contains(text(), 'Bewerbung gesendet')]",
-                    "//*[contains(text(), 'Application sent')]",
-                    "//*[contains(text(), 'successfully submitted')]",
-                    "//*[contains(text(), 'erfolgreich')]",
-                    "//*[contains(text(), 'Bewerbung wurde gesendet')]",
-                    "//*[contains(text(), 'Ihre Bewerbung')]",
-                    "//*[contains(text(), 'Your application')]",
-                    "//*[contains(text(), 'wurde übermittelt')]"
+                success_keywords = [
+                    "bewerbung gesendet", "application sent", "successfully submitted",
+                    "erfolgreich", "bewerbung wurde gesendet", "votre candidature a été envoyée",
+                    "candidatura inviata", "candidatura enviada"
                 ]
-                for xpath in success_indicators:
+                page_text = self.driver.page_source.lower()
+                if any(kw in page_text for kw in success_keywords):
+                    print("[LinkedIn] ✅ Application success detected via page text.")
+                    # Try to close the success modal
                     try:
-                        self.driver.find_element(By.XPATH, xpath)
-                        print("[LinkedIn] ✅ Application submitted successfully!")
-                        # Close any confirmation modal
-                        try:
-                            dismiss = self.driver.find_element(By.CLASS_NAME, 'artdeco-modal__dismiss')
-                            dismiss.click()
-                        except:
-                            pass
-                        return True
-                    except:
-                        continue
-            except:
-                pass
-            
-            # Check if modal is still open
-            modal_open = False
-            try:
-                modal = self.driver.find_element(By.CLASS_NAME, "jobs-easy-apply-modal__content")
-                modal_open = True
-            except:
-                try:
-                    modal = self.driver.find_element(By.CSS_SELECTOR, ".artdeco-modal")
-                    modal_open = True
-                except:
-                    pass
-            
-            if not modal_open:
-                # Modal closed - check if we had errors
-                if had_errors:
-                    print("[LinkedIn] ❌ Modal closed after errors - application likely failed")
-                    return False
-                else:
-                    print("[LinkedIn] Modal closed, assuming success")
+                        dismiss = self.driver.find_element(By.CSS_SELECTOR, "button[aria-label*='Dismiss'], .artdeco-modal__dismiss")
+                        dismiss.click()
+                    except: pass
                     return True
+            except: pass
             
-            # Fill form fields on current page
+            # 2. Verify modal is still open
+            try:
+                modal = self.driver.find_element(By.CSS_SELECTOR, ".jobs-easy-apply-modal, .artdeco-modal")
+            except:
+                if step > 1:
+                    print("[LinkedIn] Modal closed, assuming application finished.")
+                    return not had_errors
+                return False
+
+            # 3. Handle Form Fields
             self._linkedin_fill_fields()
             
-            # Find the primary action button (Next / Submit / Review)
+            # 4. Find Action Button (Primary Button)
+            # LinkedIn almost always uses artdeco-button--primary for the main action
             try:
-                primary_btn = self.driver.find_element(By.CLASS_NAME, "artdeco-button--primary")
-                button_text = primary_btn.text.lower()
+                # Target the button in the footer specifically if possible
+                action_btn = None
+                try:
+                    footer = self.driver.find_element(By.CSS_SELECTOR, ".artdeco-modal__actionbar, footer")
+                    action_btn = footer.find_element(By.CSS_SELECTOR, "button.artdeco-button--primary")
+                except:
+                    action_btn = self.driver.find_element(By.CSS_SELECTOR, "button.artdeco-button--primary")
+
+                if not action_btn or not action_btn.is_displayed():
+                    # Try finding by text if class fails (e.g. "Weiter", "Next")
+                    xpath_next = "//button[contains(., 'Weiter') or contains(., 'Next') or contains(., 'Continue') or contains(., 'Review')]"
+                    action_btn = self.driver.find_element(By.XPATH, xpath_next)
+
+                button_text = action_btn.text.lower().strip()
+                print(f"[LinkedIn] Step {step+1}: Action Button = '{button_text}'")
                 
-                print(f"[LinkedIn] Step {step+1}: Button text = '{button_text}'")
-                
-                # Check if this is the submit button
-                if any(submit_text in button_text for submit_text in submit_texts):
-                    # Try to unfollow company first
+                # Check for errors on page before clicking
+                error_indicators = [".artdeco-inline-feedback--error", ".fb-dash-form-element__error"]
+                has_visible_error = False
+                for err_sel in error_indicators:
                     try:
-                        follow_checkbox = self.driver.find_element(By.XPATH,
-                            "//label[contains(.,'to stay up to date with their page.') or contains(.,'folgen')]")
-                        follow_checkbox.click()
-                        print("[LinkedIn] Unfollowed company")
-                    except:
-                        pass
-                    
-                    # Click submit
-                    self.random_sleep(0.5, 1.0)
-                    primary_btn.click()
-                    self.random_sleep(2.0, 3.0)
-                    
-                    # Check for errors after submit
-                    error_messages = [
-                        'enter a valid', 'file is required', 'make a selection',
-                        'whole number', 'pflichtfeld', 'erforderlich', 'required'
-                    ]
-                    page_source = self.driver.page_source.lower()
-                    if any(err in page_source for err in error_messages):
-                        print("[LinkedIn] ⚠️ Form validation error detected")
-                        had_errors = True
-                        consecutive_errors += 1
-                        if consecutive_errors >= 3:
-                            print("[LinkedIn] ❌ Too many consecutive errors, giving up")
+                        errs = self.driver.find_elements(By.CSS_SELECTOR, err_sel)
+                        if any(e.is_displayed() for e in errs):
+                            has_visible_error = True
                             break
-                        continue  # Try to fill again
-                    
-                    # Close confirmation dialogs
-                    self.random_sleep(1.0, 2.0)
-                    for dismiss_class in ['artdeco-modal__dismiss', 'artdeco-toast-item__dismiss']:
-                        try:
-                            self.driver.find_element(By.CLASS_NAME, dismiss_class).click()
-                        except:
-                            pass
-                    
-                    return True
-                else:
-                    # Click Next/Continue/Review
-                    primary_btn.click()
-                    self.random_sleep(1.5, 2.5)
-                    
-                    # Check for errors after clicking
-                    error_messages = [
-                        'enter a valid', 'file is required', 'make a selection',
-                        'whole number', 'pflichtfeld', 'erforderlich'
-                    ]
-                    page_source = self.driver.page_source.lower()
-                    if any(err in page_source for err in error_messages):
-                        print("[LinkedIn] ⚠️ Validation error, filling fields again...")
-                        had_errors = True
-                        
-                        # Track consecutive errors on same step
-                        if step == last_step_with_error:
-                            consecutive_errors += 1
-                        else:
-                            consecutive_errors = 1
-                            last_step_with_error = step
-                        
-                        # If stuck on same step, give up
-                        if consecutive_errors >= 3:
-                            print("[LinkedIn] ❌ Stuck on validation errors, cannot proceed")
-                            break
-                        
-                        self._linkedin_fill_fields()  # Try to fill again
-                    else:
-                        consecutive_errors = 0  # Reset on success
-                        
-            except Exception as e:
-                print(f"[LinkedIn] No primary button found: {str(e)[:50]}")
-                had_errors = True
-                
-                # Try to dismiss and fail
-                if step > 5:
-                    try:
-                        dismiss = self.driver.find_element(By.CLASS_NAME, 'artdeco-modal__dismiss')
-                        dismiss.click()
-                        self.random_sleep(0.5, 1.0)
-                        try:
-                            confirm = self.driver.find_elements(By.CLASS_NAME, 'artdeco-modal__confirm-dialog-btn')
-                            if confirm:
-                                confirm[0].click()
-                        except:
-                            pass
+                    except: pass
+
+                if has_visible_error:
+                    had_errors = True
+                    consecutive_errors += 1
+                    print(f"[LinkedIn] ⚠️ Form error detected (Consecutive: {consecutive_errors})")
+                    if consecutive_errors >= 3:
+                        print("[LinkedIn] ❌ Too many consecutive errors. Aborting.")
                         return False
-                    except:
-                        pass
-        
-        # Max steps reached or gave up - try to dismiss
-        print("[LinkedIn] ⚠️ Max steps reached or errors, dismissing modal")
+                else:
+                    consecutive_errors = 0
+
+                # 5. Click the button
+                if any(st in button_text for st in submit_texts):
+                    # Submit step: Unfollow company if desired
+                    try:
+                        unfollow = self.driver.find_element(By.XPATH, "//label[contains(.,'follow') or contains(.,'folgen')]")
+                        unfollow.click()
+                    except: pass
+                    
+                    try: action_btn.click()
+                    except: self.driver.execute_script("arguments[0].click();", action_btn)
+                    
+                    print("[LinkedIn] ✓ Submit clicked.")
+                    self.random_sleep(3, 5)
+                    return True # Success
+                else:
+                    # Next/Review step
+                    try: action_btn.click()
+                    except: self.driver.execute_script("arguments[0].click();", action_btn)
+                    
+            except Exception as e:
+                print(f"[LinkedIn] Modal interaction error: {e}")
+                # Fallback: check if we are stuck
+                if step > 10: break
+
+        # If we reached here, it means we exceeded max_steps or broke due to error
+        print("[LinkedIn] ⚠️ Failed to complete application. Dismissing modal...")
         try:
-            self.driver.find_element(By.CLASS_NAME, 'artdeco-modal__dismiss').click()
-            self.random_sleep(0.5, 1.0)
-            # Click confirm if discard dialog appears
+            dismiss_btn = self.driver.find_element(By.CSS_SELECTOR, "button[aria-label*='Dismiss'], .artdeco-modal__dismiss")
+            dismiss_btn.click()
+            self.random_sleep(1.0, 2.0)
+            # Handle discard confirmation if it appears
             try:
-                confirm = self.driver.find_elements(By.CLASS_NAME, 'artdeco-modal__confirm-dialog-btn')
-                if confirm:
-                    confirm[0].click()
-            except:
-                pass
+                discard_btn = self.driver.find_element(By.CSS_SELECTOR, "button[data-control-name='discard_application_confirm_btn'], .artdeco-modal__confirm-dialog-btn--primary")
+                discard_btn.click()
+                print("[LinkedIn] Application discarded.")
+            except: pass
         except:
             pass
         return False
