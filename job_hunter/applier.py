@@ -27,7 +27,26 @@ class JobApplier:
         "bewerbung anzeigen", "view application", "candidatura inviata",
         "postulazione inviata", "candidatura apresentada",
         "status ihrer bewerbung", "application status", "bewerbung am",
-        "applied on"
+        "applied on", "bewerbungsstatus", "bereits beworben", "candidature déjà envoyée"
+    ]
+
+    # List of localized strings indicating a job is no longer accepting applications
+    EXPIRED_INDICATORS = [
+        "no longer accepting applications",
+        "job is closed",
+        "this job is no longer available",
+        "stelle ist nicht mehr verfügbar",
+        "stellenangebot beendet",
+        "akzeptiert keine bewerbungen mehr",
+        "bewerbung nicht mehr möglich",
+        "position filled",
+        "besetzt",
+        "nicht mehr aktiv",
+        "expired",
+        "abgelaufen",
+        "geschlossen",
+        "unavailable",
+        "nicht verfügbar"
     ]
 
     def __init__(self, resume_path=None, phone_number=None, profile_name="default"):
@@ -160,6 +179,38 @@ class JobApplier:
 
         return False, None
 
+    def _is_expired_check(self, text=None):
+        """Internal helper to detect if a job is no longer accepting applications."""
+        import re
+        if text is None:
+            text = self.driver.page_source[:10000].lower()
+        else:
+            text = text.lower()
+
+        for indicator in self.EXPIRED_INDICATORS:
+            pattern = r'\b' + re.escape(indicator) + r'\b'
+            if re.search(pattern, text):
+                return True, indicator
+
+        # Check for expired/closed badges by CSS
+        expired_selectors = [
+            ".artdeco-inline-feedback--error", # Often used for "no longer accepting"
+            ".jobs-details__closed-message",
+            ".jobsearch-JobComponent-closedMessage", # Indeed
+            "[data-testid='closed-message']", # Xing
+        ]
+        for sel in expired_selectors:
+            try:
+                el = self.driver.find_element(By.CSS_SELECTOR, sel)
+                if el.is_displayed() and len(el.text.strip()) > 0:
+                    # Check if text in the element actually means expired
+                    el_text = el.text.lower()
+                    if any(ind in el_text for ind in self.EXPIRED_INDICATORS):
+                        return True, f"CSS:{sel}"
+            except: pass
+
+        return False, None
+
     def is_easy_apply_linkedin(self, job_url=None):
         """Check if a LinkedIn job has Easy Apply button."""
         if job_url:
@@ -167,10 +218,15 @@ class JobApplier:
             self.driver.get(job_url)
             self.random_sleep(4, 7)  # Wait longer for page to load
 
-        # 1. Check for "Already Applied" first
-        is_applied, indicator = self._is_applied_check()
+        # 1. Check for "Already Applied" or "Expired"
+        is_applied, applied_ind = self._is_applied_check()
         if is_applied:
-            print(f"[LinkedIn] ⏭️ Job already applied (detected via {indicator}).")
+            print(f"[LinkedIn] ⏭️ Job already applied (detected via {applied_ind}).")
+            return False
+
+        is_expired, expired_ind = self._is_expired_check()
+        if is_expired:
+            print(f"[LinkedIn] ⏭️ Job expired/closed (detected via {expired_ind}).")
             return False
 
         # 2. Find Easy Apply Button
@@ -248,10 +304,15 @@ class JobApplier:
             self.driver.get(job_url)
             self.random_sleep(2, 4)
         
-        # 1. Check for Already Applied
-        is_applied, indicator = self._is_applied_check()
+        # 1. Check for Already Applied or Expired
+        is_applied, applied_ind = self._is_applied_check()
         if is_applied:
-            print(f"[Xing] ⏭️ Already applied (detected via {indicator})")
+            print(f"[Xing] ⏭️ Already applied (detected via {applied_ind})")
+            return False
+
+        is_expired, expired_ind = self._is_expired_check()
+        if is_expired:
+            print(f"[Xing] ⏭️ Job expired/closed (detected via {expired_ind}).")
             return False
 
         # Keywords that indicate EASY APPLY (internal application)
@@ -361,12 +422,16 @@ class JobApplier:
         self.random_sleep(6, 9) # Give it plenty of time to load and redirect
         self.handle_cookie_banners()
 
-        # 2. Check for "Already Applied" first
-        is_applied, indicator = self._is_applied_check()
+        # 2. Check for "Already Applied" or "Expired"
+        is_applied, applied_ind = self._is_applied_check()
         if is_applied:
-            print(f"[LinkedIn] ⏭️ Job already applied (detected via {indicator}).")
-            # Return success=True so the loop marks it as applied in the UI and moves on
+            print(f"[LinkedIn] ⏭️ Job already applied (detected via {applied_ind}).")
             return True, "Already applied.", True
+
+        is_expired, expired_ind = self._is_expired_check()
+        if is_expired:
+            print(f"[LinkedIn] ⏭️ Job expired/closed (detected via {expired_ind}).")
+            return False, "Job expired or no longer accepting applications.", False
 
         # 3. Detection step (unless skipped)
         if not skip_detection:
@@ -1011,11 +1076,16 @@ class JobApplier:
         self.driver.get(job_url)
         self.random_sleep(4, 7)
 
-        # 2. Check for Already Applied
-        is_applied, indicator = self._is_applied_check()
+        # 2. Check for Already Applied or Expired
+        is_applied, applied_ind = self._is_applied_check()
         if is_applied:
-            print(f"[Xing] ⏭️ Already applied (detected via {indicator})")
+            print(f"[Xing] ⏭️ Already applied (detected via {applied_ind})")
             return True, "Already applied.", True
+
+        is_expired, expired_ind = self._is_expired_check()
+        if is_expired:
+            print(f"[Xing] ⏭️ Job expired/closed (detected via {expired_ind}).")
+            return False, "Job expired or no longer accepting applications.", False
 
         # 3. Detection step (unless skipped)
         if not skip_detection:
@@ -1112,10 +1182,15 @@ class JobApplier:
             self.driver.get(job_url)
             self.random_sleep(3, 5)
 
-        # 1. Check for Already Applied
-        is_applied, indicator = self._is_applied_check()
+        # 1. Check for Already Applied or Expired
+        is_applied, applied_ind = self._is_applied_check()
         if is_applied:
-            print(f"[Indeed] ⏭️ Already applied (detected via {indicator})")
+            print(f"[Indeed] ⏭️ Already applied (detected via {applied_ind})")
+            return False
+
+        is_expired, expired_ind = self._is_expired_check()
+        if is_expired:
+            print(f"[Indeed] ⏭️ Job expired/closed (detected via {expired_ind}).")
             return False
 
         # Look for buttons that say "Schnellbewerbung" or "Easily Apply"
@@ -1136,11 +1211,16 @@ class JobApplier:
         self.driver.get(job_url)
         self.random_sleep(4, 7)
 
-        # 2. Check for Already Applied
-        is_applied, indicator = self._is_applied_check()
+        # 2. Check for Already Applied or Expired
+        is_applied, applied_ind = self._is_applied_check()
         if is_applied:
-            print(f"[Indeed] ⏭️ Already applied (detected via {indicator})")
+            print(f"[Indeed] ⏭️ Already applied (detected via {applied_ind})")
             return True, "Already applied.", True
+
+        is_expired, expired_ind = self._is_expired_check()
+        if is_expired:
+            print(f"[Indeed] ⏭️ Job expired/closed (detected via {expired_ind}).")
+            return False, "Job expired or no longer accepting applications.", False
 
         # 3. Detection step (unless skipped)
         if not skip_detection:
@@ -1687,7 +1767,8 @@ class JobApplier:
 
                 if not action_btn or not action_btn.is_displayed():
                     # Try finding by text if class fails (e.g. "Weiter", "Next")
-                    xpath_next = "//button[contains(., 'Weiter') or contains(., 'Next') or contains(., 'Continue') or contains(., 'Review')]"
+                    # Added more localized variants for next/continue/review
+                    xpath_next = "//button[contains(., 'Weiter') or contains(., 'Next') or contains(., 'Continue') or contains(., 'Review') or contains(., 'Suivant') or contains(., 'Siguiente') or contains(., 'Avanti')]"
                     action_btn = self.driver.find_element(By.XPATH, xpath_next)
 
                 button_text = action_btn.text.lower().strip()

@@ -1226,11 +1226,7 @@ elif st.session_state['page'] == 'explorer':
                         # Ferrari Optimization: Skip detection because we already did it in the Deep Scrape phase
                         success, message, is_easy = applier.apply(job_url, platform, skip_detection=True, job_title=title, company=company, target_role=target_role)
                         
-                        if not is_easy:
-                            skipped_count += 1
-                            msg = message if "already applied" in message.lower() else "Not Easy Apply"
-                            results_log.append({"Job": title, "Company": company, "Status": "⏭️ Skipped", "Message": msg})
-                        elif success:
+                        if success:
                             applied_count += 1
                             results_log.append({"Job": title, "Company": company, "Status": "✅ Applied", "Message": message})
                             jid = f"{title}-{company}"
@@ -1243,7 +1239,16 @@ elif st.session_state['page'] == 'explorer':
                             }
                             st.session_state['applied_jobs'] = db.save_applied(jid, job_data, {"auto_applied": True})
                         else:
-                            results_log.append({"Job": title, "Company": company, "Status": "❌ Failed", "Message": message})
+                            skipped_count += 1
+                            # Handle Expired Jobs (Park them)
+                            if "expired" in message.lower() or "no longer accepting" in message.lower():
+                                db.park_job(title, company, job)
+                                results_log.append({"Job": title, "Company": company, "Status": "🅿️ Parked", "Message": "Job Expired"})
+                                print(f"[App] Parked expired job: {title} @ {company}")
+                            elif not is_easy:
+                                results_log.append({"Job": title, "Company": company, "Status": "⏭️ Skipped", "Message": "Not Easy Apply"})
+                            else:
+                                results_log.append({"Job": title, "Company": company, "Status": "❌ Failed", "Message": message})
                         
                         prog.progress((i + 1) / total)
                     
