@@ -285,18 +285,6 @@ class DataManager:
                 json.dump(new_scouted, f, indent=2, ensure_ascii=False)
                 
         return removed_count
-        applied = self.load_applied()
-        if job_id in applied:
-            del applied[job_id]
-            with open(APPLIED_FILE, "w", encoding="utf-8") as f: json.dump(applied, f, indent=2, ensure_ascii=False)
-            
-        # 3. CACHE
-        cache = self.load_cache()
-        if job_id in cache:
-            del cache[job_id]
-            with open(CACHE_FILE, "w", encoding="utf-8") as f: json.dump(cache, f, indent=2, ensure_ascii=False)
-            
-        return new_list
 
     # --- APPLIED JOBS ---
     def load_applied(self):
@@ -382,7 +370,6 @@ class DataManager:
         # 2. Remove from Scouted
         self.delete_scouted_job(title, company)
         return True
-        return True
 
     # --- BLACKLIST ---
     def load_blacklist(self):
@@ -445,13 +432,13 @@ class DataManager:
                 "english proficiency": "Professional working proficiency",
                 "german proficiency": "Limited working proficiency",
                 "highest level of education": "Master's Degree",
-                "mobile phone number": "+4917626983236",
-                "phone number": "+4917626983236",
-                "mobile number": "+4917626983236",
-                "email address": "m.ali281086@gmail.com",
-                "first name": "Sheikh Ali",
-                "last name": "Mateen",
-                "full name": "Sheikh Ali Mateen",
+                "mobile phone number": "",
+                "phone number": "",
+                "mobile number": "",
+                "email address": "",
+                "first name": "",
+                "last name": "",
+                "full name": "",
                 "city": "Berlin",
                 "country": "Germany",
                 "gender": "Decline to Self-Identify",

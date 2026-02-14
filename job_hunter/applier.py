@@ -27,7 +27,8 @@ class JobApplier:
         "bewerbung anzeigen", "view application", "candidatura inviata",
         "postulazione inviata", "candidatura apresentada",
         "status ihrer bewerbung", "application status", "bewerbung am",
-        "applied on", "bewerbungsstatus", "bereits beworben", "candidature déjà envoyée"
+        "applied on", "bewerbungsstatus", "bereits beworben", "candidature déjà envoyée",
+        "you have submitted applications", "sie haben bewerbungen eingereicht"
     ]
 
     # List of localized strings indicating a job is no longer accepting applications
@@ -46,7 +47,8 @@ class JobApplier:
         "abgelaufen",
         "geschlossen",
         "unavailable",
-        "nicht verfügbar"
+        "nicht verfügbar",
+        "wir nehmen keine bewerbungen mehr an"
     ]
 
     def __init__(self, resume_path=None, phone_number=None, profile_name="default"):
@@ -54,10 +56,17 @@ class JobApplier:
         self.profile_name = profile_name
         # self.driver removed - accessed via property to avoid stale reference
         self.resume_path = resume_path
-        self.phone_number = phone_number or ""
+        self.db = DataManager()  # For question-answer config
+
+        # Pull phone from config if not provided
+        if not phone_number:
+            bot_config = self.db.load_bot_config()
+            ans = bot_config.get("answers", {})
+            phone_number = ans.get("mobile phone number") or ans.get("phone number") or ans.get("mobile number") or ""
+
+        self.phone_number = phone_number
         self.applied_count = 0
         self.max_applications = 50  # Safety limit per session
-        self.db = DataManager()  # For question-answer config
         self.current_job_title = ""  # For logging unknown questions
         self.current_company = ""
         self.session_unknown_questions = []  # Track unknown questions for user prompt
@@ -250,10 +259,12 @@ class JobApplier:
             "a[aria-label*='Easy Apply']",
             "button[aria-label*='Einfach bewerben']",
             "button[aria-label*='Einfach Bewerbung']",
+            "button[aria-label*='Einfach-Bewerbung']",
             "button[aria-label*='Schnellbewerbung']",
             "button[aria-label*='Simple candidature']",
             "a[aria-label*='Einfach bewerben']",
             "a[aria-label*='Einfach Bewerbung']",
+            "a[aria-label*='Einfach-Bewerbung']",
             ".jobs-apply-button--top-card button",
             ".jobs-apply-button--top-card a",
             "button.artdeco-button--primary", # Last resort
@@ -463,10 +474,12 @@ class JobApplier:
             "a[aria-label*='Easy Apply']",
             "button[aria-label*='Einfach bewerben']", 
             "button[aria-label*='Einfach Bewerbung']",
+            "button[aria-label*='Einfach-Bewerbung']",
             "button[aria-label*='Schnellbewerbung']",
             "button[aria-label*='Simple candidature']",
             "a[aria-label*='Einfach bewerben']",
             "a[aria-label*='Einfach Bewerbung']",
+            "a[aria-label*='Einfach-Bewerbung']",
             ".jobs-apply-button--top-card button",
             ".jobs-apply-button--top-card a",
             "button.artdeco-button--primary", # Last resort
@@ -495,6 +508,9 @@ class JobApplier:
 
                                 if any(k in btn_text or k in aria for k in apply_keywords):
                                     if not any(k in btn_text for k in external_keywords):
+                                        # Scroll into view before clicking
+                                        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                                        self.random_sleep(0.5, 1.0)
                                         try: btn.click()
                                         except: self.driver.execute_script("arguments[0].click();", btn)
                                         clicked = True
@@ -516,6 +532,8 @@ class JobApplier:
                         aria = (btn.get_attribute("aria-label") or "").lower()
                         if any(k in btn_text or k in aria for k in ["easy", "apply", "bewerben", "bewerbung", "schnellbewerbung", "einfach"]):
                             if not any(k in btn_text for k in ["website", "extern", "employer", "company site"]):
+                                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                                self.random_sleep(0.5, 1.0)
                                 try: btn.click()
                                 except: self.driver.execute_script("arguments[0].click();", btn)
                                 clicked = True
@@ -531,6 +549,7 @@ class JobApplier:
                 f"//button[contains(translate(., {uc}, {lc}), 'easy apply')]",
                 f"//button[contains(translate(., {uc}, {lc}), 'einfach bewerben')]",
                 f"//button[contains(translate(., {uc}, {lc}), 'einfach bewerbung')]",
+                f"//button[contains(translate(., {uc}, {lc}), 'einfach-bewerbung')]",
                 f"//button[contains(translate(., {uc}, {lc}), 'schnellbewerbung')]"
             ]
             
@@ -548,7 +567,14 @@ class JobApplier:
             print("[LinkedIn] ❌ Easy Apply button not found (Selectors + XPath failed).")
             return False, "Easy Apply button not found. May require external apply.", False
         
-        self.random_sleep(2, 4)
+        # Wait for modal to appear
+        print("[LinkedIn] Waiting for modal...")
+        try:
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".jobs-easy-apply-modal, .artdeco-modal"))
+            )
+        except:
+            print("[LinkedIn] ⚠️ Modal did not appear within 10 seconds.")
         
         # 2. Process the Modal Steps (Unified Logic)
         success = self._process_linkedin_modal()
@@ -912,8 +938,8 @@ class JobApplier:
                     self.db.log_unknown_question(label_text, self.current_job_title, self.current_company)
                     
                     # Smart selection: prefer higher values, avoid "Gar nicht", "Keine", "0"
-                    negative_terms = ['gar nicht', 'keine', 'kein', 'nicht', 'nein', 'überhaupt nicht', 'never', 'none', 'not at all', '0 ']
-                    prefer_terms = ['5+', '10+', '3+', '4+', 'more than', 'über', 'ja', 'yes', 'expert', 'erfahren', 'native', 'muttersprache', 'fließend', 'bilingual', 'immer', 'always']
+                    negative_terms = ['gar nicht', 'keine', 'kein', 'nicht', 'nein', 'überhaupt nicht', 'never', 'none', 'not at all', '0 ', 'nein']
+                    prefer_terms = ['5+', '10+', '3+', '4+', 'more than', 'über', 'ja', 'yes', 'expert', 'erfahren', 'native', 'muttersprache', 'fließend', 'bilingual', 'immer', 'always', 'einverstanden', 'bereit']
                     
                     selected = False
                     # First try to find a preferred option
@@ -989,7 +1015,7 @@ class JobApplier:
 
                         if not options_found:
                             # Smart selection: prefer "Ja/Yes" over "Nein/No"
-                            yes_labels = ['ja', 'yes', 'agree', 'willing', 'immer', 'einverstanden', 'bereit', 'zustimmen']
+                            yes_labels = ['ja', 'yes', 'agree', 'willing', 'immer', 'einverstanden', 'bereit', 'zustimmen', 'verstanden']
                             for radio in radios:
                                 try:
                                     label_el = radio.find_element(By.XPATH, "./following-sibling::label | ../label")
@@ -1024,7 +1050,7 @@ class JobApplier:
                                     break
                         
                         if not btn_clicked:
-                            yes_labels = ['ja', 'yes', 'agree', 'willing', 'immer', 'einverstanden', 'bereit', 'zustimmen']
+                            yes_labels = ['ja', 'yes', 'agree', 'willing', 'immer', 'einverstanden', 'bereit', 'zustimmen', 'verstanden']
                             for btn in buttons:
                                 if any(y in btn.text.lower() for y in yes_labels):
                                     btn.click()
@@ -1737,7 +1763,7 @@ class JobApplier:
         submit_texts = [
             'submit application', 'bewerbung senden', 'absenden', 
             'submit', 'senden', 'abschicken', 'bewerben', 'postuler',
-            'finalizar', 'enviar'
+            'finalizar', 'enviar', 'bewerbung einreichen', 'einreichen'
         ]
 
         had_errors = False
@@ -1791,10 +1817,20 @@ class JobApplier:
                 if not action_btn or not action_btn.is_displayed():
                     # Try finding by text if class fails (e.g. "Weiter", "Next")
                     # Added more localized variants for next/continue/review
-                    xpath_next = "//button[contains(., 'Weiter') or contains(., 'Next') or contains(., 'Continue') or contains(., 'Review') or contains(., 'Suivant') or contains(., 'Siguiente') or contains(., 'Avanti')]"
+                    xpath_next = "//button[contains(., 'Weiter') or contains(., 'Next') or contains(., 'Continue') or contains(., 'Review') or contains(., 'Suivant') or contains(., 'Siguiente') or contains(., 'Avanti') or contains(., 'Überprüfen')]"
                     action_btn = self.driver.find_element(By.XPATH, xpath_next)
 
                 button_text = action_btn.text.lower().strip()
+
+                # Double check for "Review" or "Überprüfen" - they should be clicked but they are not always primary
+                if not action_btn.is_displayed():
+                     xpath_review = "//button[contains(., 'Review') or contains(., 'Überprüfen') or contains(., 'Überprüfung')]"
+                     try:
+                         review_btn = self.driver.find_element(By.XPATH, xpath_review)
+                         if review_btn.is_displayed():
+                             action_btn = review_btn
+                             button_text = action_btn.text.lower().strip()
+                     except: pass
                 print(f"[LinkedIn] Step {step+1}: Action Button = '{button_text}'")
                 
                 # Check for errors on page before clicking
@@ -1823,15 +1859,27 @@ class JobApplier:
                     # Submit step: Unfollow company if desired
                     try:
                         unfollow = self.driver.find_element(By.XPATH, "//label[contains(.,'follow') or contains(.,'folgen')]")
-                        unfollow.click()
+                        if unfollow.is_displayed():
+                            unfollow.click()
                     except: pass
                     
                     try: action_btn.click()
                     except: self.driver.execute_script("arguments[0].click();", action_btn)
                     
-                    print("[LinkedIn] ✓ Submit clicked.")
-                    self.random_sleep(3, 5)
-                    return True # Success
+                    print("[LinkedIn] ✓ Submit clicked. Waiting for confirmation...")
+                    self.random_sleep(4, 6)
+
+                    # Check for errors immediately after submit
+                    try:
+                        errors = self.driver.find_elements(By.CSS_SELECTOR, ".artdeco-inline-feedback--error, .fb-dash-form-element__error")
+                        if any(e.is_displayed() for e in errors):
+                            print("[LinkedIn] ❌ Errors found after clicking submit.")
+                            had_errors = True
+                            continue # Try to fix and submit again if possible
+                    except: pass
+
+                    # If no errors, check if modal closed or success shown
+                    return True # Assume success if no errors blocked us
                 else:
                     # Next/Review step
                     try: action_btn.click()
