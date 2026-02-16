@@ -623,11 +623,11 @@ if st.session_state['page'] == 'home':
         scrape_limit = c2.number_input("Limit per Role & Platform", value=30, step=10, min_value=1, max_value=5000)
         
         c_easy, c_deep = st.columns([1, 1])
-        easy_apply_only = c_easy.toggle("✨ Easy Apply Only", value=False, help="Live Apply Mode: Browse & Apply until limit reached")
+        easy_apply_only = c_easy.toggle("✨ Easy Apply Live", value=False, help="Live Apply Mode: Browse & Apply until limit reached")
         deep_scrape_toggle = c_deep.toggle("🕵️ Deep Scrape JDs", value=True, help="Fetch full Job Description during scraping. (Slower but better analysis)")
         
         if easy_apply_only:
-             platforms = ["LinkedIn", "Xing"]
+             platforms = ["LinkedIn", "Xing", "Indeed"]
              selected_platforms = st.multiselect("Platforms", platforms, default=platforms, disabled=True, help="Restricted to platforms supporting automated Easy Apply.")
              
              st.info("🤖 **Live Apply Mode**: Bot will browse job pages and apply until limit is reached, skipping blacklisted/parked/applied jobs!")
@@ -661,81 +661,166 @@ if st.session_state['page'] == 'home':
                 if easy_apply_only and auto_resume_path:
                     status_box.info(f"🤖 **Live Apply Mode**: Running keywords with limit of {scrape_limit} applications each...")
                     
-                    from job_hunter.applier import JobApplier
-                    applier = JobApplier(resume_path=auto_resume_path)
+                    # Fix: Ensure resume path is absolute
+                    import os
+                    if auto_resume_path:
+                        auto_resume_path = os.path.abspath(auto_resume_path)
+
+                    from job_hunter.scout import Scout # Restore missing import
+                    scout = Scout() # Initialize Scout instance
+                    
+                    applier = None # Will be instantiated per platform to handle driver lifecycle
                     
                     session_total_applied = 0
                     total_skipped = 0
                     total_errors = 0
+                    all_unknown_questions = []
                     
+                    # 1. Collect all search parameters first
+                    search_queue = []
                     for role_name, resume_data in st.session_state['resumes'].items():
-                        # Use target_keywords (same as standard scrape mode)
                         raw_kw = resume_data.get("target_keywords", "")
                         keywords = [k.strip() for k in raw_kw.split(';') if k.strip()]
                         if not keywords:
-                            # Fallback to suggestions if target_keywords is empty
                             suggestions = resume_data.get("suggestions", [])
                             if isinstance(suggestions, list) and suggestions:
                                 keywords = suggestions
                             else:
-                                st.warning(f"⚠️ No keywords set for '{role_name}'. Please set Target Keywords in Step 1.")
                                 continue
                         
-                        # Save titles to history for this resume
+                        # Save titles history
                         db.save_resume_title_history(resume_data.get("filename", role_name), keywords)
                         
                         locations = [l.strip() for l in scrape_location.split(';') if l.strip()]
                         if not locations:
                             locations = ["Germany"]
-                        
+                            
                         for kw in keywords:
-                            # Tracking per keyword and platform to respect "Limit per Role & Platform"
-                            kw_applied_li = 0
-                            kw_applied_xing = 0
-
                             for loc in locations:
-                                # LinkedIn Live Apply
-                                if kw_applied_li < scrape_limit:
-                                    status_box.info(f"🔍 [LinkedIn] '{kw}' in '{loc}' (Remaining: {scrape_limit - kw_applied_li})...")
-                                    try:
-                                        results = applier.live_apply_linkedin(
-                                            keyword=kw,
-                                            location=loc,
-                                            target_count=scrape_limit - kw_applied_li,
-                                            target_role=kw
-                                        )
-                                        applied_now = len(results.get("applied", []))
-                                        kw_applied_li += applied_now
-                                        session_total_applied += applied_now
-                                        total_skipped += len(results.get("skipped", []))
-                                        total_errors += len(results.get("errors", []))
-                                        st.session_state['applied_jobs'] = db.load_applied()
-                                    except Exception as e:
-                                        st.error(f"LinkedIn error: {e}")
+                                search_queue.append({
+                                    "keyword": kw,
+                                    "location": loc,
+                                    "role": role_name
+                                })
+                    
+                    # 2. Iterate by Platform -> Keyword (Unified Workflow)
+                    target_platforms = ["LinkedIn", "Xing", "Indeed"]
+                    
+                    for platform in target_platforms:
+                        # Skip if platform not selected by user (though "Easy Apply Live" auto-selects these)
+                        # But purely for safety:
+                        if platform not in selected_platforms: continue
+
+                        st.divider()
+                        st.caption(f"🌍 Switching to **{platform}**...")
+                        
+                        for search_item in search_queue:
+                            kw = search_item['keyword']
+                            loc = search_item['location']
+                            role_mapped = search_item['role']
+                            
+                            # Check session limit
+                            if session_total_applied >= scrape_limit * len(search_queue) * len(target_platforms): 
+                                break
+
+                            status_box.info(f"🔍 [{platform}] Scouting '{kw}' in '{loc}' (Step 1/2)...")
+                            
+                            try:
+                                # A. SCOUT (Find Jobs using robust logic)
+                                # We request slightly more than needed to account for non-easy-apply false positives
+                                scout_results = scout.launch_mission(
+                                    keyword=kw,
+                                    location=loc,
+                                    limit=scrape_limit, # Fetch only what we need
+                                    platforms=[platform], # Strict platform isolation
+                                    easy_apply=True, # Critical
+                                    deep_scrape=False, # Speed optimization
+                                    status_callback=lambda m: None # Silent scout
+                                )
                                 
-                                # Xing Live Apply
-                                if kw_applied_xing < scrape_limit:
-                                    status_box.info(f"🔍 [Xing] '{kw}' in '{loc}' (Remaining: {scrape_limit - kw_applied_xing})...")
-                                    try:
-                                        results = applier.live_apply_xing(
-                                            keyword=kw,
-                                            location=loc,
-                                            target_count=scrape_limit - kw_applied_xing,
-                                            target_role=kw
-                                        )
-                                        applied_now = len(results.get("applied", []))
-                                        kw_applied_xing += applied_now
-                                        session_total_applied += applied_now
-                                        total_skipped += len(results.get("skipped", []))
-                                        total_errors += len(results.get("errors", []))
-                                        st.session_state['applied_jobs'] = db.load_applied()
-                                    except Exception as e:
-                                        st.error(f"Xing error: {e}")
+                                if not scout_results:
+                                    st.warning(f"  ⚠️ No jobs found on {platform} for '{kw}'")
+                                    continue
+                                
+                                status_box.info(f"  🎯 Found {len(scout_results)} candidates. Applying (Step 2/2)...")
+                                
+                                # Instantiate Applier HERE (after Scout closed its driver)
+                                # This ensures a fresh driver is created for applying
+                                if not applier:
+                                     from job_hunter.applier import JobApplier
+                                     applier = JobApplier(resume_path=auto_resume_path)
+                                
+                                # B. APPLY (Immediate Execution)
+                                current_platform_applied = 0
+                                
+                                for job in scout_results:
+                                    if current_platform_applied >= scrape_limit: break
+                                    
+                                    job_url = job.get("link")
+                                    title = job.get("title", kw)
+                                    company = job.get("company", "Unknown")
+                                    
+                                    # Apply
+                                    success, message, is_easy = applier.apply(
+                                        job_url=job_url, 
+                                        platform=platform, 
+                                        skip_detection=True, # Scout already verified it's likely Easy Apply
+                                        job_title=title, 
+                                        company=company, 
+                                        target_role=role_mapped
+                                    )
+                                    
+                                    if success:
+                                        applied_now = 1
+                                        session_total_applied += 1
+                                        current_platform_applied += 1
+                                        
+                                        # Save to DB (Move from Scouted to Applied essentially, though Scout didn't save locally yet)
+                                        # Scout.launch_mission SAVES to scouted_jobs.json automatically.
+                                        # So we just need to save to applied_jobs.json.
+                                        
+                                        jid = f"{title}-{company}"
+                                        job_data = {
+                                            "Job Title": title,
+                                            "Company": company,
+                                            "Web Address": job_url,
+                                            "Platform": platform,
+                                            "Found_job": role_mapped
+                                        }
+                                        st.session_state['applied_jobs'] = db.save_applied(jid, job_data, {"auto_applied": True})
+                                        
+                                        # Update UI Logs
+                                        st.toast(f"✅ Applied: {title} @ {company}")
+                                    
+                                    else:
+                                        if not is_easy:
+                                            total_skipped += 1
+                                            # st.toast(f"Skipped (Not Easy): {title}")
+                                        else:
+                                            total_errors += 1
+                                            # st.toast(f"Failed: {title}")
+                            
+                            except Exception as e:
+                                st.error(f"{platform} error for {kw}: {e}")
+                        
+                        # Close Applier for this platform (if it was created)
+                        if applier:
+                            all_unknown_questions.extend(getattr(applier, 'session_unknown_questions', []))
+                            applier.close()
+                            applier = None
                     
                     # Collect all unknown questions from the session
-                    all_unknown = applier.session_unknown_questions if hasattr(applier, 'session_unknown_questions') else []
+                    all_unknown = all_unknown_questions
                     
-                    applier.close()
+                    if applier: applier.close() # Safety check
+                    
+                    # Cleanup: Remove successfully applied jobs from scouted list to prevent duplicates
+                    if session_total_applied > 0:
+                        removed = db.archive_applied_jobs()
+                        if removed > 0:
+                            st.session_state['scouted_jobs'] = db.load_scouted() # Refresh UI data
+                            st.toast(f"🧹 Archived {removed} applied jobs from scout list")
+                    
                     status_box.success(f"🎉 Live Apply Complete! Total Applied: {session_total_applied} | Skipped: {total_skipped} | Errors: {total_errors}")
                     
                     # Display unknown questions if any
@@ -1152,6 +1237,8 @@ elif st.session_state['page'] == 'explorer':
                 if st.button("🏁 End Day / Archive Applied", help="Removes all Applied jobs from the active 'Scouted' list.", use_container_width=True):
                      archived_count = db.archive_applied_jobs()
                      if archived_count > 0:
+                         # Update Session State to reflect changes immediately
+                         st.session_state['scouted_jobs'] = db.load_scouted()
                          st.toast(f"Archived {archived_count} jobs from current view!", icon="🧹")
                          st.cache_data.clear()
                          st.rerun()
@@ -1165,7 +1252,7 @@ elif st.session_state['page'] == 'explorer':
                 eligible_for_easy = display_df[display_df["Easy Apply"] & ~display_df["Applied"] & display_df["Platform"].isin(apply_platforms)]
                 eligible_count = len(eligible_for_easy)
                 
-                if st.button(f"🤖 Auto Easy Apply All ({eligible_count} jobs)", type="primary", use_container_width=True, disabled=(eligible_count == 0)):
+                if st.button(f"🤖 Easy Apply Batch ({eligible_count} jobs)", type="primary", use_container_width=True, disabled=(eligible_count == 0)):
                     st.session_state['show_easy_apply_confirm'] = True
             
             # CONFIRMATION DIALOG

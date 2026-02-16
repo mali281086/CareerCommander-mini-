@@ -3,7 +3,7 @@ import time
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
+# from webdriver_manager.chrome import ChromeDriverManager # Removed in favor of Selenium Manager
 
 class BrowserManager:
     _instance = None
@@ -53,8 +53,9 @@ class BrowserManager:
 
         # Service
         try:
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=options)
+            # Use Selenium Manager (Selenium 4.10+) automatically
+            # service = Service(ChromeDriverManager().install()) 
+            driver = webdriver.Chrome(options=options)
             
             # Apply stealth to hide Selenium fingerprint
             try:
