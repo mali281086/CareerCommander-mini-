@@ -39,31 +39,6 @@ class DataManager:
              with open(BLACKLIST_FILE, "w", encoding="utf-8") as f: 
                  json.dump({"companies": [], "titles": []}, f)
 
-    # --- API KEYS ---
-    def load_api_keys(self):
-        """Returns dict of {Alias: Key}"""
-        keys_file = os.path.join(DATA_DIR, "api_keys.json")
-        if not os.path.exists(keys_file):
-             return {}
-        try:
-            with open(keys_file, "r", encoding="utf-8") as f: return json.load(f)
-        except: return {}
-
-    def save_api_key(self, alias, key):
-        keys_file = os.path.join(DATA_DIR, "api_keys.json")
-        data = self.load_api_keys()
-        data[alias] = key
-        with open(keys_file, "w", encoding="utf-8") as f: json.dump(data, f, indent=2)
-        return data
-
-    def delete_api_key(self, alias):
-        keys_file = os.path.join(DATA_DIR, "api_keys.json")
-        data = self.load_api_keys()
-        if alias in data:
-            del data[alias]
-            with open(keys_file, "w", encoding="utf-8") as f: json.dump(data, f, indent=2)
-        return data
-
     # --- SCOUTED JOBS ---
     def load_scouted(self):
         try:
@@ -385,6 +360,22 @@ class DataManager:
         with open(BLACKLIST_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         return data
+
+    # --- RESUME CONFIG ---
+    def load_resume_config(self):
+        config_file = os.path.join(DATA_DIR, "resume_config.json")
+        if not os.path.exists(config_file):
+            return {}
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
+
+    def save_resume_config(self, config):
+        config_file = os.path.join(DATA_DIR, "resume_config.json")
+        with open(config_file, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
 
     # --- CAREER AUDIT PERSISTENCE ---
     def load_audit_report(self):

@@ -2,12 +2,12 @@ import time
 import random
 import json
 import urllib.parse
-import winsound
 import os
+import platform
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
+from selenium.common.exceptions import StaleElementReferenceException
 from tools.browser_manager import BrowserManager
 from job_hunter.data_manager import DataManager
 
@@ -795,8 +795,13 @@ class JobApplier:
                             # Interactive mode: Alert user and wait for them to fill the field
                             print(f"[LinkedIn] 🔔 UNKNOWN QUESTION: '{label_text}'")
                             
-                            # 1. Beep (Windows)
-                            try: winsound.Beep(1000, 1000)
+                            # 1. Beep
+                            try:
+                                if platform.system() == "Windows":
+                                    import winsound
+                                    winsound.Beep(1000, 1000)
+                                else:
+                                    print('\a') # Terminal beep
                             except: pass
                             
                             # 2. Log to file
