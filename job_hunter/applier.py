@@ -1532,6 +1532,10 @@ class JobApplier:
             return self.apply_xing(job_url, skip_detection)
         elif "indeed" in platform_lower:
             return self.apply_indeed(job_url, skip_detection)
+        elif "stepstone" in platform_lower:
+            return False, "Stepstone does not support automated Easy Apply yet. Please apply manually.", False
+        elif "zip" in platform_lower:
+            return False, "ZipRecruiter does not support automated Easy Apply yet. Please apply manually.", False
         else:
             return False, f"Platform '{platform}' not supported for auto-apply.", False
     

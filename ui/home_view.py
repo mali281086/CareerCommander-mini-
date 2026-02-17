@@ -90,7 +90,7 @@ def render_home_view():
             deep_scrape = c_deep.toggle("🕵️ Deep Scrape JDs", value=True)
 
             platforms = ["LinkedIn", "Indeed", "Stepstone", "Xing", "ZipRecruiter"]
-            selected_platforms = st.multiselect("Platforms", platforms, default=["LinkedIn", "Indeed", "Xing"])
+            selected_platforms = st.multiselect("Platforms", platforms, default=platforms)
 
             if st.button("🚀 Launch All Missions", type="primary", use_container_width=True, disabled=not st.session_state['resumes']):
                 status_box = st.empty()

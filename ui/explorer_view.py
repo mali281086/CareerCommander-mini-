@@ -151,7 +151,8 @@ def handle_editor_changes(edited_df, original_df, db):
             st.rerun()
 
 def run_bulk_apply(df, db):
-    candidates = df[(df["Easy Apply"] == True)]
+    # Support all 5 platforms in the batch apply if marked as Easy Apply
+    candidates = df[(df["Easy Apply"] == True) & (df["Status"] == "")]
     if candidates.empty:
         st.info("No Easy Apply candidates found.")
         return
