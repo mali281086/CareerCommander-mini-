@@ -6,8 +6,11 @@ from job_hunter.scrapers.ziprecruiter import ZipRecruiterScraper
 from job_hunter.data_manager import DataManager
 from job_hunter.content_fetcher import ContentFetcher
 from tools.browser_manager import BrowserManager
+from tools.logger import get_logger
 import time
 import random
+
+logger = get_logger("Scout")
 
 class Scout:
     def __init__(self):
@@ -23,14 +26,11 @@ class Scout:
     def launch_mission(self, keyword, location, limit, platforms, easy_apply=False, deep_scrape=True, status_callback=None):
         """
         Launches a job scouting mission.
-        - easy_apply: If True, filters for Easy Apply jobs.
-        - deep_scrape: If True, fetches full JD and language subsequently (Integrated).
-        - status_callback: Optional function(msg) for UI progress updates.
         """
         all_results = []
         
         def log(msg):
-            print(msg)
+            logger.info(msg)
             if status_callback:
                 status_callback(msg)
 
@@ -85,5 +85,5 @@ class Scout:
             
         finally:
             # Cleanup - Close ALL Browsers (Ferrari: ensures no leaks)
-            print("Mission Complete. Force closing all browsers...")
+            logger.info("Mission Complete. Force closing all browsers...")
             BrowserManager().close_all_drivers()

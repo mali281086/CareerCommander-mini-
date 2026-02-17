@@ -5,6 +5,9 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from tools.browser_manager import BrowserManager
+from tools.logger import get_logger
+
+logger = get_logger("ContentFetcher")
 
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
@@ -168,7 +171,7 @@ class ContentFetcher:
                             el = driver.find_element(By.CSS_SELECTOR, selector)
                             if el and len(el.text) > 50:
                                 desc_el = el
-                                print(f"[Indeed] Found description with selector: {selector}")
+                                logger.info(f"[Indeed] Found description with selector: {selector}")
                                 break
                         except:
                             continue
@@ -187,9 +190,9 @@ class ContentFetcher:
                     if desc_el:
                         data['description'] = desc_el.text
                     else:
-                        print("[Indeed] Could not find job description element")
+                        logger.warning("[Indeed] Could not find job description element")
                 except Exception as e:
-                    print(f"[Indeed] Error fetching details: {e}")
+                    logger.error(f"[Indeed] Error fetching details: {e}")
                 
             # --- Stepstone ---
             elif "stepstone" in p_lower:

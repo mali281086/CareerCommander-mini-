@@ -2,6 +2,11 @@ import json
 import os
 import re
 from datetime import datetime
+from typing import List, Dict, Any, Optional
+from job_hunter.models import JobRecord
+from tools.logger import get_logger
+
+logger = get_logger("DataManager")
 
 DATA_DIR = "data"
 SCOUTED_FILE = os.path.join(DATA_DIR, "scouted_jobs.json")
@@ -10,6 +15,9 @@ PARKED_FILE = os.path.join(DATA_DIR, "parked_jobs.json")
 BLACKLIST_FILE = os.path.join(DATA_DIR, "blacklist.json")
 CACHE_FILE = os.path.join(DATA_DIR, "analysis_cache.json")
 AUDIT_FILE = os.path.join(DATA_DIR, "career_audit.md")
+API_KEYS_FILE = os.path.join(DATA_DIR, "api_keys.json")
+BOT_CONFIG_FILE = os.path.join(DATA_DIR, "bot_config.json")
+RESUME_HISTORY_FILE = os.path.join(DATA_DIR, "resume_title_history.json")
 
 class DataManager:
     def __init__(self):
@@ -19,283 +27,156 @@ class DataManager:
         if not os.path.exists(DATA_DIR):
             os.makedirs(DATA_DIR)
         
-        # Scouted: LIST of job dicts
-        if not os.path.exists(SCOUTED_FILE):
-            with open(SCOUTED_FILE, "w", encoding="utf-8") as f: json.dump([], f)
+        default_empty_list = [SCOUTED_FILE, PARKED_FILE]
+        for filepath in default_empty_list:
+            if not os.path.exists(filepath):
+                with open(filepath, "w", encoding="utf-8") as f:
+                    json.dump([], f)
             
-        # Applied: DICT keyed by job_id
-        if not os.path.exists(APPLIED_FILE):
-            with open(APPLIED_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
-            
-        if not os.path.exists(CACHE_FILE):
-            with open(CACHE_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
+        default_empty_dict = [APPLIED_FILE, CACHE_FILE, API_KEYS_FILE]
+        for filepath in default_empty_dict:
+            if not os.path.exists(filepath):
+                with open(filepath, "w", encoding="utf-8") as f:
+                    json.dump({}, f)
 
-        # Parked: LIST of parked job IDs/Metadata
-        if not os.path.exists(PARKED_FILE):
-            with open(PARKED_FILE, "w", encoding="utf-8") as f: json.dump([], f)
-
-        # Blacklist: DICT
         if not os.path.exists(BLACKLIST_FILE):
              with open(BLACKLIST_FILE, "w", encoding="utf-8") as f: 
-                 json.dump({"companies": [], "titles": []}, f)
+                 json.dump({"companies": [], "titles": [], "safe_phrases": []}, f)
 
     # --- API KEYS ---
-    def load_api_keys(self):
-        """Returns dict of {Alias: Key}"""
-        keys_file = os.path.join(DATA_DIR, "api_keys.json")
-        if not os.path.exists(keys_file):
-             return {}
+    def load_api_keys(self) -> Dict[str, str]:
         try:
-            with open(keys_file, "r", encoding="utf-8") as f: return json.load(f)
-        except: return {}
+            with open(API_KEYS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
 
-    def save_api_key(self, alias, key):
-        keys_file = os.path.join(DATA_DIR, "api_keys.json")
+    def save_api_key(self, alias: str, key: str) -> Dict[str, str]:
         data = self.load_api_keys()
         data[alias] = key
-        with open(keys_file, "w", encoding="utf-8") as f: json.dump(data, f, indent=2)
+        with open(API_KEYS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
         return data
 
-    def delete_api_key(self, alias):
-        keys_file = os.path.join(DATA_DIR, "api_keys.json")
+    def delete_api_key(self, alias: str) -> Dict[str, str]:
         data = self.load_api_keys()
         if alias in data:
             del data[alias]
-            with open(keys_file, "w", encoding="utf-8") as f: json.dump(data, f, indent=2)
+            with open(API_KEYS_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
         return data
 
     # --- SCOUTED JOBS ---
-    def load_scouted(self):
+    def load_scouted(self) -> List[Dict[str, Any]]:
         try:
-            with open(SCOUTED_FILE, "r", encoding="utf-8") as f: return json.load(f)
-        except: return []
+            with open(SCOUTED_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return []
 
-    def save_scouted_jobs(self, jobs_list, append=False):
-        """
-        Saves a list of job dictionaries.
-        If append is True, adds to existing.
-        If append is False, OVERWRITES (fresh search).
-        """
-        # --- FILTER: Remove Already Applied Jobs ---
+    def save_scouted_jobs(self, jobs_list: List[Dict[str, Any]], append: bool = False) -> List[Dict[str, Any]]:
+        # Convert inputs to JobRecord for normalization
+        new_records = [JobRecord.from_dict(j) for j in jobs_list]
+
+        # Filter against applied and parked
         applied = self.load_applied()
-        applied_ids = set(applied.keys())
-        applied_links = set()
-        for v in applied.values():
-             details = v.get('job_details', {})
-             # Collect various link keys just in case
-             lnk = details.get('Web Address') or details.get('link') or details.get('url')
-             if lnk: applied_links.add(lnk)
-
-        filtered_list = []
-
-        # --- LOAD PARKED JOBS TO IGNORE ---
         parked = self.load_parked()
-        parked_ids = set()
-        parked_links = set()
-
-        for p in parked:
-            # Reconstruct IDs or use saved ones
-            p_id = p.get('id')
-            if p_id: parked_ids.add(p_id)
-            if p.get('link'): parked_links.add(p.get('link'))
-            # Also support Title-Company matching from parked entries
-            if p.get('title') and p.get('company'):
-                parked_ids.add(f"{p['title']}-{p['company']}")
-        # ----------------------------------
-
-        # ----------------------------------
-
-        # --- LOAD BLACKLIST & SAFE WORDS ---
-        blacklist = self.load_blacklist()
-        bl_companies = [c.lower() for c in blacklist.get("companies", []) if c]
-        bl_titles = [t.lower() for t in blacklist.get("titles", []) if t]
-        safe_phrases = [s.lower() for s in blacklist.get("safe_phrases", []) if s]
-        # ----------------------
-
-        # STEP 1: SEGREGATE (Potential Survivors vs Blacklisted Candidates)
-        potential_survivors = []
-        blacklisted_candidates = [] # Temp cache as requested
-
-        for job in jobs_list:
-             j_title = job.get('title', 'Unknown').lower()
-             j_company = job.get('company', 'Unknown').lower()
-             
-             # Check Company Blacklist first (always drops? User didn't specify safe for company, but implied safe for title)
-             # Let's assume Safe applies to Title primarily.
-             is_bad_company = False
-             for bl_c in bl_companies:
-                  if bl_c in j_company: 
-                      is_bad_company = True
-                      break
-             
-             if is_bad_company:
-                 # Company ban is usually absolute? User said "scraping should drop jobs from those companies".
-                 # So we drop them entirely, usually no rescue for bad company.
-                 continue
-
-             # Check Title Blacklist
-             is_bad_title = False
-             for bl_t in bl_titles:
-                 if bl_t in j_title:
-                     is_bad_title = True
-                     break
-             
-             if is_bad_title:
-                 blacklisted_candidates.append(job)
-             else:
-                 potential_survivors.append(job)
-
-        # STEP 2: RESCUE MISSION (Safe Phrases)
-        rescued_jobs = []
-        if safe_phrases:
-            for job in blacklisted_candidates:
-                j_title = job.get('title', '').lower()
-                is_safe = False
-                for safe in safe_phrases:
-                    # Check if safe word exists in title
-                    if safe in j_title:
-                        is_safe = True
-                        break
-                
-                if is_safe:
-                    rescued_jobs.append(job)
         
-        # Merge Survivors and Rescued
-        final_candidates = potential_survivors + rescued_jobs
+        applied_ids = set(applied.keys())
+        applied_links = {v.get('job_details', {}).get('link') for v in applied.values()}
+        parked_ids = {p.get('id') for p in parked}
+        parked_links = {p.get('link') for p in parked}
 
-        # STEP 3: FINAL APPLIED/PARKED CHECK
-        filtered_list = []
-        for job in final_candidates:
-             j_title = job.get('title', 'Unknown')
-             j_company = job.get('company', 'Unknown')
-             jid = f"{j_title}-{j_company}" # Normalization happens in app logic mostly, but here we construct ID
-             j_link = job.get('link')
+        blacklist = self.load_blacklist()
+        bl_companies = [c.lower() for c in blacklist.get("companies", [])]
+        bl_titles = [t.lower() for t in blacklist.get("titles", [])]
+        safe_phrases = [s.lower() for s in blacklist.get("safe_phrases", [])]
 
-             if jid in applied_ids: continue
-             if j_link and j_link in applied_links: continue
-             
-             if jid in parked_ids: continue
-             if j_link and j_link in parked_links: continue
-             
-             filtered_list.append(job)
-             
-        jobs_list = filtered_list  
-        # -------------------------------------------
+        final_records = []
+        for record in new_records:
+            jid = record.job_id
+            link = record.link
+            
+            # Blacklist check
+            if any(c in record.company.lower() for c in bl_companies):
+                continue
+            
+            if any(t in record.title.lower() for t in bl_titles):
+                if not any(s in record.title.lower() for s in safe_phrases):
+                    continue
+
+            # Already applied or parked check
+            if jid in applied_ids or link in applied_links:
+                continue
+            if jid in parked_ids or link in parked_links:
+                continue
+                
+            final_records.append(record)
 
         if append:
-            current = self.load_scouted()
-            
-            # --- DEDUPLICATION & UPDATE STRATEGY ---
-            link_to_job = {j.get('link'): j for j in current if j.get('link')}
-            comp_to_job = {(j.get('title', '').strip().lower(), j.get('company', '').strip().lower()): j
-                           for j in current if j.get('title') and j.get('company')}
-            
-            for job in jobs_list:
-                link = job.get('link')
-                t_new = job.get('title', '').strip().lower()
-                c_new = job.get('company', '').strip().lower()
-                composite = (t_new, c_new) if (t_new and c_new) else None
+            current_raw = self.load_scouted()
+            current_records = {JobRecord.from_dict(r).job_id: JobRecord.from_dict(r) for r in current_raw}
 
-                existing_job = None
-                if link and link in link_to_job:
-                    existing_job = link_to_job[link]
-                elif composite and composite in comp_to_job:
-                    existing_job = comp_to_job[composite]
+            for nr in final_records:
+                if nr.job_id in current_records:
+                    # Update existing with more detail
+                    existing = current_records[nr.job_id]
+                    if len(nr.rich_description) > len(existing.rich_description):
+                        existing.rich_description = nr.rich_description
+                    if nr.language != "Unknown":
+                        existing.language = nr.language
+                    existing.is_easy_apply = nr.is_easy_apply or existing.is_easy_apply
+                    existing.updated_at = datetime.now().isoformat()
+                else:
+                    current_records[nr.job_id] = nr
 
-                if existing_job:
-                    # Update existing record with new non-empty data
-                    for key, value in job.items():
-                        if value and value not in ["Unknown", "None", None]:
-                            if key in ["rich_description", "language", "is_easy_apply"]:
-                                if key == "rich_description":
-                                    if len(str(value)) > len(str(existing_job.get(key, ""))):
-                                        existing_job[key] = value
-                                else:
-                                    existing_job[key] = value
-                            elif not existing_job.get(key) or existing_job.get(key) == "Unknown":
-                                existing_job[key] = value
-                    continue
-                
-                # If unique, add it
-                current.append(job)
-                if link: link_to_job[link] = job
-                if composite: comp_to_job[composite] = job
-
-            final_data = current
+            final_data = [r.to_dict() for r in current_records.values()]
         else:
-            final_data = jobs_list
+            final_data = [r.to_dict() for r in final_records]
 
         with open(SCOUTED_FILE, "w", encoding="utf-8") as f:
             json.dump(final_data, f, indent=2, ensure_ascii=False)
         return final_data
 
-    def delete_scouted_job(self, title, company):
-        """
-        CASCADE DELETES a job from ALL records (Scouted, Applied, Cache) based on Title and Company.
-        """
-        # 1. SCOUTED
+    def delete_scouted_job(self, title: str, company: str) -> List[Dict[str, Any]]:
         curr = self.load_scouted()
-        job_id = f"{title}-{company}" # Construct ID
-        
         new_list = [
             x for x in curr 
             if not (x.get('title') == title and x.get('company') == company)
         ]
-        
         with open(SCOUTED_FILE, "w", encoding="utf-8") as f:
             json.dump(new_list, f, indent=2, ensure_ascii=False)
-            
         return new_list
 
-    def archive_applied_jobs(self):
-        """
-        Removes jobs from 'scouted_jobs.json' that are present in 'applied_jobs.json'.
-        Returns the number of jobs removed (archived).
-        """
+    def archive_applied_jobs(self) -> int:
         scouted = self.load_scouted()
         applied = self.load_applied()
-        
-        # Identify jobs to keep (those NOT in applied)
-        # Using composite key Title-Company as ID
-        # applied_keys = set(applied.keys()) 
-        # But applied keys are generated strings. 
-        # DataManager.save_applied uses job_id passed to it. 
-        # In app.py, job_id = f"{row['Job Title']}-{row['Company']}"
-        
-        # So we can reconstruct keys from scouted to check existence
         
         original_count = len(scouted)
         new_scouted = []
         
         for job in scouted:
-            # Reconstruct ID
-            # Note: Startup normalization in app.py renames keys, but raw json has 'title', 'company'
-            # We must use raw keys here.
-            j_title = job.get('title', 'Unknown')
-            j_company = job.get('company', 'Unknown')
-            job_id = f"{j_title}-{j_company}"
-            
-            if job_id not in applied:
+            record = JobRecord.from_dict(job)
+            if record.job_id not in applied:
                 new_scouted.append(job)
                 
         removed_count = original_count - len(new_scouted)
-        
         if removed_count > 0:
             with open(SCOUTED_FILE, "w", encoding="utf-8") as f:
                 json.dump(new_scouted, f, indent=2, ensure_ascii=False)
-                
         return removed_count
 
     # --- APPLIED JOBS ---
-    def load_applied(self):
+    def load_applied(self) -> Dict[str, Any]:
         try:
-            with open(APPLIED_FILE, "r", encoding="utf-8") as f: return json.load(f)
-        except: return {}
+            with open(APPLIED_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
 
-    def save_applied(self, job_id, job_data=None, analysis_data=None, status="applied"):
+    def save_applied(self, job_id: str, job_data: Optional[Dict[str, Any]] = None,
+                     analysis_data: Optional[Dict[str, Any]] = None, status: str = "applied") -> Dict[str, Any]:
         data = self.load_applied()
-        
-        # Merge if exists
         record = data.get(job_id, {
             "created_at": datetime.now().isoformat(),
             "job_details": {},
@@ -305,56 +186,54 @@ class DataManager:
         record["status"] = status
         record["last_updated"] = datetime.now().isoformat()
         
-        if job_data: record["job_details"] = job_data
-        if analysis_data: record["ai_analysis"] = analysis_data
+        if job_data:
+            record["job_details"] = JobRecord.from_dict(job_data).to_dict()
+        if analysis_data:
+            record["ai_analysis"] = analysis_data
         
         data[job_id] = record
-        with open(APPLIED_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=2, ensure_ascii=False)
+        with open(APPLIED_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
         return data
 
-    def delete_applied(self, job_id):
+    def delete_applied(self, job_id: str) -> Dict[str, Any]:
         data = self.load_applied()
         if job_id in data:
             del data[job_id]
-            with open(APPLIED_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=2, ensure_ascii=False)
+            with open(APPLIED_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
         return data
 
-    # --- CACHE (AI Results) ---
-    def load_cache(self):
+    # --- CACHE ---
+    def load_cache(self) -> Dict[str, Any]:
         try:
-            with open(CACHE_FILE, "r", encoding="utf-8") as f: return json.load(f)
-        except: return {}
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
 
-    def save_cache(self, job_id, results):
+    def save_cache(self, job_id: str, results: Any) -> Dict[str, Any]:
         data = self.load_cache()
         data[job_id] = results
-        with open(CACHE_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=2, ensure_ascii=False)
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
         return data
 
     # --- PARKED JOBS ---
-    def load_parked(self):
+    def load_parked(self) -> List[Dict[str, Any]]:
         try:
-            with open(PARKED_FILE, "r", encoding="utf-8") as f: return json.load(f)
-        except: return []
+            with open(PARKED_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return []
 
-    def park_job(self, title, company, job_data=None):
-        """
-        Moves a job from SCOUTED to PARKED.
-        """
-        # 1. Add to Parked
+    def park_job(self, title: str, company: str, job_data: Optional[Dict[str, Any]] = None) -> bool:
         parked = self.load_parked()
+        jid = f"{title}-{company}"
         
-        # Check if already parked
-        exists = False
-        for p in parked:
-            if p.get('title') == title and p.get('company') == company:
-                exists = True
-                break
-        
-        if not exists:
-            # Construct minimal or full record
+        if not any(p.get('id') == jid for p in parked):
             record = {
-                "id": f"{title}-{company}",
+                "id": jid,
                 "title": title,
                 "company": company,
                 "parked_at": datetime.now().isoformat()
@@ -362,61 +241,44 @@ class DataManager:
             if job_data:
                 record['link'] = job_data.get('link') or job_data.get('Web Address')
                 record['platform'] = job_data.get('platform') or job_data.get('Platform')
-                
             parked.append(record)
             with open(PARKED_FILE, "w", encoding="utf-8") as f:
                 json.dump(parked, f, indent=2, ensure_ascii=False)
         
-        # 2. Remove from Scouted
         self.delete_scouted_job(title, company)
         return True
 
     # --- BLACKLIST ---
-    def load_blacklist(self):
+    def load_blacklist(self) -> Dict[str, List[str]]:
         try:
             with open(BLACKLIST_FILE, "r", encoding="utf-8") as f: 
-                data = json.load(f)
-                if "safe_phrases" not in data: data["safe_phrases"] = []
-                return data
-        except: return {"companies": [], "titles": [], "safe_phrases": []}
+                return json.load(f)
+        except:
+            return {"companies": [], "titles": [], "safe_phrases": []}
 
-    def save_blacklist(self, companies, titles, safe_phrases=[]):
+    def save_blacklist(self, companies: List[str], titles: List[str], safe_phrases: List[str] = []) -> Dict[str, List[str]]:
         data = {"companies": companies, "titles": titles, "safe_phrases": safe_phrases}
         with open(BLACKLIST_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         return data
 
-    # --- CAREER AUDIT PERSISTENCE ---
-    def load_audit_report(self):
-        try:
-            if os.path.exists(AUDIT_FILE):
+    # --- AUDIT ---
+    def load_audit_report(self) -> str:
+        if os.path.exists(AUDIT_FILE):
+            try:
                 with open(AUDIT_FILE, "r", encoding="utf-8") as f:
                     return f.read()
-            return ""
-        except: return ""
+            except: pass
+        return ""
 
-    def save_audit_report(self, markdown_text):
-        # "Logbook" Mode: Prepend new report to existing history
-        existing = ""
-        if os.path.exists(AUDIT_FILE):
-             try:
-                 with open(AUDIT_FILE, "r", encoding="utf-8") as f:
-                     existing = f.read()
-             except: pass
-        
-        # Add a separator if there's existing content
-        if existing:
-            new_content = markdown_text + "\n\n<br>\n\n---\n\n<br>\n\n" + existing
-        else:
-            new_content = markdown_text
-
+    def save_audit_report(self, markdown_text: str):
+        existing = self.load_audit_report()
+        new_content = markdown_text + ("\n\n<br>\n\n---\n\n<br>\n\n" + existing if existing else "")
         with open(AUDIT_FILE, "w", encoding="utf-8") as f:
             f.write(new_content)
 
-    # --- BOT CONFIG (Question-Answer Mappings) ---
-    def load_bot_config(self):
-        """Load bot configuration including answer mappings and unknown questions."""
-        config_file = os.path.join(DATA_DIR, "bot_config.json")
+    # --- BOT CONFIG ---
+    def load_bot_config(self) -> Dict[str, Any]:
         default_config = {
             "answers": {
                 "years of experience": "3",
@@ -432,13 +294,6 @@ class DataManager:
                 "english proficiency": "Professional working proficiency",
                 "german proficiency": "Limited working proficiency",
                 "highest level of education": "Master's Degree",
-                "mobile phone number": "",
-                "phone number": "",
-                "mobile number": "",
-                "email address": "",
-                "first name": "",
-                "last name": "",
-                "full name": "",
                 "city": "Berlin",
                 "country": "Germany",
                 "gender": "Decline to Self-Identify",
@@ -449,195 +304,155 @@ class DataManager:
             },
             "unknown_questions": []
         }
-        
-        if not os.path.exists(config_file):
-            with open(config_file, "w", encoding="utf-8") as f:
-                json.dump(default_config, f, indent=2)
+        if not os.path.exists(BOT_CONFIG_FILE):
+            self.save_bot_config(default_config)
             return default_config
-        
         try:
-            with open(config_file, "r", encoding="utf-8") as f:
+            with open(BOT_CONFIG_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except:
             return default_config
     
-    def save_bot_config(self, config):
-        """Save bot configuration."""
-        config_file = os.path.join(DATA_DIR, "bot_config.json")
-        with open(config_file, "w", encoding="utf-8") as f:
+    def save_bot_config(self, config: Dict[str, Any]):
+        with open(BOT_CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
     
-    def add_answer(self, question_pattern, answer):
-        """Add or update an answer for a question pattern."""
+    def add_answer(self, question_pattern: str, answer: str) -> Dict[str, Any]:
         config = self.load_bot_config()
-        config["answers"][question_pattern.lower().strip()] = answer
-        # Remove from unknown if it was there
-        q_lower = question_pattern.lower().strip()
-        config["unknown_questions"] = [q for q in config["unknown_questions"] if q.get("question", "").lower() != q_lower]
+        q_norm = question_pattern.lower().strip()
+        config["answers"][q_norm] = answer
+        config["unknown_questions"] = [q for q in config["unknown_questions"] if q.get("question", "").lower() != q_norm]
         self.save_bot_config(config)
         return config
     
-    def delete_answer(self, question_pattern):
-        """Delete an answer mapping."""
+    def delete_answer(self, question_pattern: str) -> Dict[str, Any]:
         config = self.load_bot_config()
-        q_lower = question_pattern.lower().strip()
-        if q_lower in config["answers"]:
-            del config["answers"][q_lower]
+        q_norm = question_pattern.lower().strip()
+        if q_norm in config["answers"]:
+            del config["answers"][q_norm]
             self.save_bot_config(config)
         return config
     
-    def log_unknown_question(self, question_text, job_title="", company=""):
-        """Log an unknown question encountered during auto-apply."""
+    def log_unknown_question(self, question_text: str, job_title: str = "", company: str = ""):
         config = self.load_bot_config()
-        
-        # Check if already logged
-        q_lower = question_text.lower().strip()
-        for q in config["unknown_questions"]:
-            if q.get("question", "").lower() == q_lower:
-                return config  # Already logged
-        
-        # Add new unknown question
+        q_norm = question_text.lower().strip()
+        if any(q.get("question", "").lower() == q_norm for q in config["unknown_questions"]):
+            return
         config["unknown_questions"].append({
             "question": question_text.strip(),
             "job_title": job_title,
             "company": company,
             "timestamp": datetime.now().isoformat()
         })
-        
         self.save_bot_config(config)
-        return config
     
     def clear_unknown_questions(self):
-        """Clear all unknown questions."""
         config = self.load_bot_config()
         config["unknown_questions"] = []
         self.save_bot_config(config)
-        return config
     
-    def get_answer_for_question(self, question_text):
-        """Find the best matching answer for a question with improved matching logic."""
+    def get_answer_for_question(self, question_text: str) -> Optional[str]:
         config = self.load_bot_config()
-        
         def normalize(text):
-            # Remove non-alphanumeric chars and extra spaces
             return re.sub(r'[^\w\s]', '', text.lower()).strip()
-
         q_norm = normalize(question_text)
         if not q_norm: return None
         
-        # 1. Exact match on normalized text
+        # Exact match
         for pattern, answer in config["answers"].items():
-            if normalize(pattern) == q_norm:
-                return answer
+            if normalize(pattern) == q_norm: return answer
 
-        # 2. Pattern match (if pattern is a subset of question or vice versa)
+        # Substring match
         for pattern, answer in config["answers"].items():
             p_norm = normalize(pattern)
-            if not p_norm: continue
-            if p_norm in q_norm or q_norm in p_norm:
-                return answer
+            if p_norm and (p_norm in q_norm or q_norm in p_norm): return answer
 
-        # 3. Keyword-based matching (significant overlap)
+        # Keyword overlap
         q_words = set(q_norm.split())
-        best_match = None
-        max_overlap = 0
-
+        best_match, max_overlap = None, 0
         for pattern, answer in config["answers"].items():
             p_words = set(normalize(pattern).split())
             if not p_words: continue
-
             overlap = len(q_words.intersection(p_words))
-            # Require at least 2 words overlap or 100% of pattern words if pattern is short
-            if overlap > max_overlap:
-                if overlap >= 2 or overlap == len(p_words):
-                    max_overlap = overlap
-                    best_match = answer
-        
+            if overlap > max_overlap and (overlap >= 2 or overlap == len(p_words)):
+                max_overlap, best_match = overlap, answer
         return best_match
     
-    def save_qa_answer(self, question_text, answer):
-        """Save a question-answer pair to the bot config.
-        
-        This is called when the user manually fills in a field and the bot captures the answer.
-        The question is normalized (lowercase) for matching.
-        """
-        config = self.load_bot_config()
-        q_lower = question_text.lower().strip()
-        config["answers"][q_lower] = answer
-        self.save_bot_config(config)
+    def save_qa_answer(self, question_text: str, answer: str) -> bool:
+        self.add_answer(question_text, answer)
         return True
     
-    # ==========================================
-    # RESUME TITLE HISTORY
-    # ==========================================
-    def _get_resume_history_file(self):
-        """Get path to resume title history file."""
-        return os.path.join(DATA_DIR, "resume_title_history.json")
-    
-    def load_resume_title_history(self, resume_filename):
-        """
-        Load previously used job titles for a specific resume.
-        
-        Args:
-            resume_filename: The resume filename (e.g., "Sheikh Ali Mateen - Resume.pdf")
-        
-        Returns:
-            List of previously used job titles, most recent first
-        """
-        filepath = self._get_resume_history_file()
-        if os.path.exists(filepath):
-            with open(filepath, "r", encoding="utf-8") as f:
-                history = json.load(f)
-                return history.get(resume_filename, [])
+    # --- RESUME HISTORY ---
+    def load_resume_title_history(self, resume_filename: str) -> List[str]:
+        if os.path.exists(RESUME_HISTORY_FILE):
+            try:
+                with open(RESUME_HISTORY_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f).get(resume_filename, [])
+            except: pass
         return []
     
-    def save_resume_title_history(self, resume_filename, titles):
-        """
-        Save job titles used for a specific resume.
-        Appends new titles and keeps unique, most recent first.
+    def save_resume_title_history(self, resume_filename: str, titles: List[str]):
+        history = {}
+        if os.path.exists(RESUME_HISTORY_FILE):
+            try:
+                with open(RESUME_HISTORY_FILE, "r", encoding="utf-8") as f:
+                    history = json.load(f)
+            except: pass
         
-        Args:
-            resume_filename: The resume filename
-            titles: List of job titles to save (strings)
-        """
-        filepath = self._get_resume_history_file()
-        
-        # Load existing
-        if os.path.exists(filepath):
-            with open(filepath, "r", encoding="utf-8") as f:
-                history = json.load(f)
-        else:
-            history = {}
-        
-        # Get existing titles for this resume
         existing = history.get(resume_filename, [])
-        
-        # Merge: new titles first, then existing, remove duplicates
         combined = []
-        for t in titles:
+        for t in (titles + existing):
             t_clean = t.strip()
             if t_clean and t_clean not in combined:
                 combined.append(t_clean)
-        for t in existing:
-            if t not in combined:
-                combined.append(t)
-        
-        # Limit to last 50 titles
         history[resume_filename] = combined[:50]
-        
-        with open(filepath, "w", encoding="utf-8") as f:
+        with open(RESUME_HISTORY_FILE, "w", encoding="utf-8") as f:
             json.dump(history, f, indent=2, ensure_ascii=False)
 
-    # --- BROWSER CONFIG ---
-    def save_browser_config(self, user_data_dir, profile_name):
+    # --- RESUME CONFIG ---
+    def save_resume_config(self, resumes_dict: Dict[str, Any]):
+        config_file = os.path.join(DATA_DIR, "resume_config.json")
+        config_data = {}
+        for role, data in resumes_dict.items():
+            config_data[role] = {
+                "filename": data.get("filename"),
+                "file_path": data.get("file_path"),
+                "text": data.get("text"),
+                "target_keywords": data.get("target_keywords", "")
+            }
+        with open(config_file, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=2, ensure_ascii=False)
+
+    def load_resume_config(self) -> Dict[str, Any]:
+        config_file = os.path.join(DATA_DIR, "resume_config.json")
+        resumes = {}
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, "r", encoding="utf-8") as f:
+                    config_data = json.load(f)
+                for role, data in config_data.items():
+                    fpath = data.get("file_path")
+                    if fpath and os.path.exists(fpath):
+                        with open(fpath, "rb") as f:
+                            file_bytes = f.read()
+                        resumes[role] = {
+                            "filename": data.get("filename"),
+                            "file_path": fpath,
+                            "text": data.get("text", ""),
+                            "bytes": file_bytes,
+                            "target_keywords": data.get("target_keywords", "")
+                        }
+            except Exception as e:
+                logger.info(f"Error loading resumes: {e}")
+        return resumes
+
+    def save_browser_config(self, user_data_dir: str, profile_name: str):
         from dotenv import set_key
         env_file = ".env"
         if not os.path.exists(env_file):
             with open(env_file, "w") as f: f.write("")
-
         set_key(env_file, "SYSTEM_CHROME_USER_DATA", user_data_dir)
         set_key(env_file, "SYSTEM_CHROME_PROFILE", profile_name)
-
         os.environ["SYSTEM_CHROME_USER_DATA"] = user_data_dir
         os.environ["SYSTEM_CHROME_PROFILE"] = profile_name
         return True
