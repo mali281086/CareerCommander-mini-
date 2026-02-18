@@ -368,14 +368,32 @@ class DataManager:
             return {}
         try:
             with open(config_file, "r", encoding="utf-8") as f:
-                return json.load(f)
+                config = json.load(f)
+
+            # Load PDF bytes for each resume if file exists
+            for name, data in config.items():
+                path = data.get('file_path')
+                if path and os.path.exists(path):
+                    try:
+                        with open(path, "rb") as f:
+                            data['pdf_bytes'] = f.read()
+                    except:
+                        pass
+            return config
         except:
             return {}
 
     def save_resume_config(self, config):
+        # Create a deep copy to avoid modifying the original config in session state
+        import copy
+        clean_config = copy.deepcopy(config)
+        for name, data in clean_config.items():
+            if 'pdf_bytes' in data:
+                del data['pdf_bytes']
+
         config_file = os.path.join(DATA_DIR, "resume_config.json")
         with open(config_file, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
+            json.dump(clean_config, f, indent=2, ensure_ascii=False)
 
     # --- CAREER AUDIT PERSISTENCE ---
     def load_audit_report(self):

@@ -9,8 +9,5 @@ selenium
 webdriver-manager
 selenium-stealth
 
-# AI & Agents
+# AI & Languages
 langdetect
-crewai
-langchain-google-genai
-google-generativeai

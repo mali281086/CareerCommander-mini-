@@ -191,8 +191,7 @@ For each Platform (LinkedIn → Xing → Indeed):
 |-------|-----------|
 | **Frontend** | Streamlit |
 | **Browser Automation** | Selenium + ChromeDriver |
-| **AI / LLM** | Google Gemini (via `google-generativeai` / LangChain) |
-| **Multi-Agent AI** | CrewAI |
+| **AI / LLM** | Browser-based AI (ChatGPT/Gemini via Selenium) |
 | **Data Storage** | JSON files (no database) |
 | **Language Detection** | `langdetect` |
 | **Resume Parsing** | PyPDF / custom parser |

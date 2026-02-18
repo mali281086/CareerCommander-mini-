@@ -67,6 +67,6 @@ def render_applied_view(db):
             st.write(f"**Link:** [Open]({details.get('Web Address') or details.get('link')})")
 
             if st.button("🗑️ Delete Application Record", key=f"del_app_{jid}"):
-                db.delete_applied_job(jid)
+                db.delete_applied(jid)
                 st.session_state['applied_jobs'] = db.load_applied()
                 st.rerun()

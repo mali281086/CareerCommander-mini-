@@ -134,16 +134,22 @@ def render_explorer_view(db):
 
             # Action buttons
             with c5:
-                act_cols = st.columns(3)
+                act_cols = st.columns(4)
                 if act_cols[0].button("📝", key=f"intel_{idx}", help="Analyze"):
                     st.session_state['selected_job_for_analysis'] = row.to_dict()
                     st.session_state['show_analysis_panel'] = True
 
-                if act_cols[1].button("🅿️", key=f"park_{idx}", help="Park (Hide)"):
+                if act_cols[1].button("✅", key=f"mark_{idx}", help="Mark as Applied"):
+                    st.session_state['applied_jobs'] = db.save_applied(job_id, row.to_dict(), status="applied")
+                    db.archive_applied_jobs()
+                    st.toast(f"Marked {row['Job Title']} as Applied!")
+                    st.rerun()
+
+                if act_cols[2].button("🅿️", key=f"park_{idx}", help="Park (Hide)"):
                     db.park_job(row['Job Title'], row['Company'], row.to_dict())
                     st.rerun()
 
-                if act_cols[2].button("🗑️", key=f"del_{idx}", help="Delete"):
+                if act_cols[3].button("🗑️", key=f"del_{idx}", help="Delete"):
                     db.delete_scouted_job(row['Job Title'], row['Company'])
                     st.rerun()
 
@@ -231,15 +237,35 @@ def render_analysis_panel(job, db):
     with tab4:
         if not is_analyzed: st.info("Run AI Analysis first.")
         else:
-            st.text_area("Tailored Resume", analysis_results.get("tailored_resume", ""), height=400)
+            c_res1, c_res2 = st.columns([1, 1])
+            with c_res1:
+                st.text_area("Tailored Resume", analysis_results.get("tailored_resume", ""), height=600)
+            with c_res2:
+                st.markdown("### Original Resume Preview")
+                if "pdf_bytes" in selected_resume_data:
+                    base64_pdf = base64.b64encode(selected_resume_data['pdf_bytes']).decode('utf-8')
+                    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf"></iframe>'
+                    st.markdown(pdf_display, unsafe_allow_html=True)
+                else:
+                    st.warning("PDF bytes not found in session. Try re-uploading.")
 
     with tab5:
         render_chat_tab(job, selected_resume_data, analysis_results, db)
 
 def render_chat_tab(job, resume_data, analysis_results, db):
     job_id = f"{job['Job Title']}-{job['Company']}"
-    st.subheader("💬 Ask AI")
 
+    c_chat1, c_chat2 = st.columns([1, 1])
+
+    with c_chat2:
+        st.markdown("### Resume Preview")
+        if "pdf_bytes" in resume_data:
+            base64_pdf = base64.b64encode(resume_data['pdf_bytes']).decode('utf-8')
+            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf"></iframe>'
+            st.markdown(pdf_display, unsafe_allow_html=True)
+
+    with c_chat1:
+        st.subheader("💬 Ask AI")
     if "chat_history" not in st.session_state: st.session_state.chat_history = {}
     if job_id not in st.session_state.chat_history:
         st.session_state.chat_history[job_id] = analysis_results.get("qna_history", [])
@@ -304,7 +330,7 @@ def render_easy_apply_confirm(eligible_jobs, db):
             success, message, is_easy = applier.apply(url, platform, skip_detection=True, job_title=title, company=company)
 
             if success:
-                db.save_applied(f"{title}-{company}", job, {"auto_applied": True})
+                st.session_state['applied_jobs'] = db.save_applied(f"{title}-{company}", job, {"auto_applied": True})
             elif "expired" in message.lower() or "no longer accepting" in message.lower():
                 db.park_job(title, company, job)
 

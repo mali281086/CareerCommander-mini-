@@ -36,10 +36,32 @@ def render_home_view(db):
                         "filename": uploaded_file.name,
                         "file_path": os.path.abspath(save_path),
                         "text": text,
+                        "pdf_bytes": uploaded_file.getvalue(),
                         "target_keywords": ""
                     }
                     db.save_resume_config(st.session_state['resumes'])
                     st.success(f"Uploaded {uploaded_file.name}")
+            st.rerun()
+
+        if st.session_state['resumes']:
+            st.markdown("---")
+            if st.button("🤖 Seek AI assistance", use_container_width=True):
+                st.info("💡 It is better to upload all the resumes before seeking suggestions.")
+
+                from job_hunter.career_advisor import CareerAdvisor
+                advisor = CareerAdvisor()
+
+                with st.spinner("AI is analyzing your resumes to suggest job titles..."):
+                    for name, data in st.session_state['resumes'].items():
+                        suggestions = advisor.suggest_roles(data.get('text', ''))
+                        if suggestions:
+                            st.session_state['resumes'][name]['target_keywords'] = "; ".join(suggestions)
+
+                    db.save_resume_config(st.session_state['resumes'])
+                    st.success("✅ AI suggestions applied!")
+                    st.rerun()
+
+            st.caption("Seek AI Suggested Job Titles that fits your resume.")
 
     with col_list:
         if st.session_state['resumes']:
