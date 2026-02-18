@@ -1,148 +1,129 @@
-import urllib.parse
-from selenium.webdriver.common.by import By
-from job_hunter.scrapers.base_scraper import BaseScraper
 import time
+from typing import List, Optional
+from selenium.webdriver.common.by import By
+from langdetect import detect
+
+from job_hunter.scrapers.base_scraper import BaseScraper
+from job_hunter.models import JobRecord
+from tools.browser_manager import BrowserManager
 
 class XingScraper(BaseScraper):
     def __init__(self, profile_name="default"):
-        super().__init__(profile_name=profile_name)
+        self.bm = BrowserManager()
+        self.profile_name = profile_name
+        self.platform_name = "Xing"
 
-    def search(self, keyword, location, limit=10, easy_apply=False):
+    @property
+    def driver(self):
+        return self.bm.get_driver(headless=False, profile_name=self.profile_name)
+
+    def search(self, keyword: str, location: str, limit: int = 10, easy_apply: bool = False) -> List[JobRecord]:
         results = []
-        # Reverting to standard search URL.
-        # The user-requested '/ki' path seems to require a session-specific 'id' and redirects to a landing page without it.
-        base_url = "https://www.xing.com/jobs/search?"
-        params = {
-            "keywords": keyword,
-            "location": location
-        }
-        url = base_url + urllib.parse.urlencode(params)
+        search_url = f"https://www.xing.com/jobs/search?keywords={keyword.replace(' ', '%20')}&location={location.replace(' ', '%20')}"
         
-        print(f"[Xing] Navigating to: {url}")
-        self.driver.get(url)
-        self.random_sleep(3, 5)
+        self.log(f"Navigating to: {search_url}")
+        self.driver.get(search_url)
+        self.random_sleep(4, 6)
+
+        # Xing has no Easy Apply filter in the main search URL easily,
+        # so we often have to check cards or filter subsequently.
+
+        processed_links = set()
+        page = 1
         
-        scrolled = 0
-        while len(results) < limit and scrolled < 5:
-            # Strategy 3: Link-First Discovery (Most Robust)
-            # Find all links that look like job postings
-            links = self.driver.find_elements(By.XPATH, "//a[contains(@href, '/jobs/')]")
+        while len(results) < limit and page < 5:
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            self.random_sleep(2, 3)
+
+            cards = self.driver.find_elements(By.CSS_SELECTOR, "article[data-testid='job-posting-card']") or \
+                    self.driver.find_elements(By.CSS_SELECTOR, ".job-posting-card")
             
-            print(f"[Xing] Found {len(links)} potential job links...")
+            self.log(f"Found {len(cards)} cards on page {page}...")
             
-            for a_tag in links:
+            for card in cards:
                 if len(results) >= limit: break
                 try:
-                    href = a_tag.get_attribute("href")
-                    # Filter out non-job links (e.g. nav, search, login)
-                    if not href: continue
+                    title_el = card.find_element(By.CSS_SELECTOR, "h2")
+                    title = title_el.text.strip()
                     
-                    # Blacklist of generic Xing paths
-                    bad_patterns = [
-                        "search?", "login", "/jobs/find", "/jobs/my-jobs", "/jobs/search", 
-                        "/recruiting", "pro.", "xref="
-                    ]
-                    if any(bad in href for bad in bad_patterns): continue
+                    company_el = card.find_element(By.CSS_SELECTOR, "p[class*='Company']")
+                    company = company_el.text.strip()
+                    
+                    link_el = card.find_element(By.TAG_NAME, "a")
+                    link = link_el.get_attribute("href")
+                    
+                    if link and "/jobs/" in link and link not in processed_links:
+                        processed_links.add(link)
+                        
+                        # Note: is_easy_apply check on cards is hard for Xing without opening
+                        # but we can check for "Schnellbewerbung" text
+                        is_easy = "Schnellbewerbung" in card.text or "Easy Apply" in card.text
+                        
+                        if easy_apply and not is_easy:
+                            continue
 
-                    # Title is usually the link text
-                    title = a_tag.text.strip()
-                    if not title or len(title) < 5: 
-                         # Sometimes title is inside a div inside the a
-                         title = a_tag.get_attribute("textContent").strip()
-                    
-                    # Fallback: Parse URL slug if text is still empty
-                    if not title:
-                        # href format: .../jobs/location-title-id or .../jobs/title-location-id
-                        # e.g. .../jobs/berlin-business-data-analyst-12345
-                        try:
-                            slug = href.split("/jobs/")[-1]
-                            # Remove trailing query params
-                            slug = slug.split("?")[0]
-                            # Split by hyphen
-                            parts = slug.split("-")
-                            # Remove the last part if it's a number (ID)
-                            if parts[-1].isdigit(): parts.pop()
-                            
-                            # Reconstruct
-                            title = " ".join(parts).title()
-                        except: pass
-                    
-                    # Ignore generic titles
-                    if title.lower() in ["jobs", "search", "find jobs", "create a job ad", "your jobs"]: continue
-                    if not title: continue # Skip empty links
-                    
-                    # Company extraction: Look at parent text
-                    company = "Unknown"
-                    try:
-                        # Go up to the card container (likely li or article or div)
-                        # We try going up 1-3 levels
-                        parent = a_tag.find_element(By.XPATH, "./..")
-                        grandparent = parent.find_element(By.XPATH, "./..")
-                        
-                        # Get full text of the card
-                        card_text = grandparent.text
-                        lines = [l.strip() for l in card_text.split("\n") if l.strip()]
-                        
-                        # Heuristic: If Title is line X, Company is usually X+1
-                        # Find title in lines (fuzzy match)
-                        for i, line in enumerate(lines):
-                            # The slug-derived title might not match text exactly
-                            # So just take the first line that isn't the title or "New" badge
-                            if len(line) > 3 and line.lower() not in title.lower() and "new" not in line.lower():
-                                 company = line
-                                 # If company is "Kununu", skip
-                                 if "kununu" in company.lower(): continue
-                                 break
-                    except: pass
-                    
-                    if company == "Unknown": company = "Xing Employer"
-                    
-                    if not any(j['link'] == href for j in results):
-                        results.append({
-                            "title": title,
-                            "company": company,
-                            "location": location,
-                            "link": href,
-                            "platform": "Xing",
-                            "is_easy_apply": False # Default
-                        })
-                except: continue
+                        job_rec = JobRecord(
+                            title=title,
+                            company=company,
+                            location=location,
+                            link=link.split("?")[0],
+                            platform=self.platform_name,
+                            is_easy_apply=is_easy
+                        )
+                        results.append(job_rec)
+                except:
+                    continue
             
-            # Scroll logic
-            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            self.random_sleep(2, 4)
-            scrolled += 1
+            if len(results) >= limit: break
 
-        print(f"[Xing] Scraped {len(results)} jobs.")
-        
-        if easy_apply and results:
-            print(f"[Xing] 🕵️ Filtering {len(results)} jobs for 'Easy Apply'...")
-            easy_apply_results = []
-            for i, job in enumerate(results):
-                try:
-                    print(f"   [{i+1}/{len(results)}] Checking: {job['title']}...")
-                    self.driver.get(job['link'])
-                    self.random_sleep(2, 4)
-                    
-                    # Logic: Check for indicators of Easy Apply
-                    # Indicators: "Schnellbewerbung" text, or specific internal application buttons.
-                    # We check page text for simplicity and speed.
-                    page_source = self.driver.page_source.lower()
-                    
-                    # "schnellbewerbung" is the German term for Easy Apply on Xing
-                    # "easy apply" might appear in English interface
-                    if "schnellbewerbung" in page_source or "easy apply" in page_source:
-                        print(f"      ✅ Found Easy Apply!")
-                        job["is_easy_apply"] = True
-                        easy_apply_results.append(job)
-                    else:
-                        print(f"      ❌ Standard Apply only.")
-                        job["is_easy_apply"] = False
-                        
-                except Exception as e:
-                    print(f"      ⚠️ Error checking job: {e}")
-            
-            print(f"[Xing] Filtered down to {len(easy_apply_results)} Easy Apply jobs.")
-            return easy_apply_results
+            # Try to click next page if needed
+            try:
+                next_btn = self.driver.find_element(By.CSS_SELECTOR, "button[aria-label='Next'], a[rel='next']")
+                self.driver.execute_script("arguments[0].click();", next_btn)
+                self.random_sleep(3, 5)
+                page += 1
+            except:
+                break
 
         return results
+
+    def fetch_details(self, job_url: str) -> Optional[dict]:
+        if not job_url: return None
+        
+        self.driver.get(job_url)
+        self.random_sleep(3, 5)
+
+        details = {
+            "description": "",
+            "is_easy_apply": False,
+            "language": "de",
+            "company": ""
+        }
+
+        # Easy Apply Check
+        page_source = self.driver.page_source.lower()
+        if "schnellbewerbung" in page_source or "easy apply" in page_source:
+            details["is_easy_apply"] = True
+
+        # Company Extraction
+        try:
+            c_el = self.driver.find_element(By.CSS_SELECTOR, "[data-testid='header-company-name']")
+            details['company'] = c_el.text.strip()
+        except: pass
+
+        # Description
+        try:
+            desc_el = self.driver.find_element(By.CSS_SELECTOR, "[class*='html-description'], [data-testid='job-description-content']")
+            details['description'] = desc_el.text
+        except:
+            try:
+                main = self.driver.find_element(By.TAG_NAME, "main")
+                details['description'] = main.text
+            except: pass
+
+        if details["description"]:
+            try:
+                details["language"] = detect(details["description"])
+            except: pass
+
+        return details

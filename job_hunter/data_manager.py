@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import yaml
 from datetime import datetime
 
 DATA_DIR = "data"
@@ -638,6 +639,23 @@ class DataManager:
             json.dump(history, f, indent=2, ensure_ascii=False)
 
     # --- BROWSER CONFIG ---
+    def load_selectors(self):
+        """Loads CSS/XPath selectors from selectors.yaml."""
+        filepath = os.path.join(DATA_DIR, "selectors.yaml")
+        if not os.path.exists(filepath):
+            return {}
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        except:
+            return {}
+
+    def save_selectors(self, config_dict):
+        """Saves CSS/XPath selectors to selectors.yaml."""
+        filepath = os.path.join(DATA_DIR, "selectors.yaml")
+        with open(filepath, "w", encoding="utf-8") as f:
+            yaml.dump(config_dict, f, default_flow_style=False)
+
     def save_browser_config(self, user_data_dir, profile_name):
         from dotenv import set_key
         env_file = ".env"

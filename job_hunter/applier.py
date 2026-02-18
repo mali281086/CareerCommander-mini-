@@ -1,3 +1,4 @@
+from tools.logger import logger, save_debug_artifact
 import time
 import random
 import json
@@ -7,9 +8,12 @@ import platform
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import StaleElementReferenceException
+from selenium.common.exceptions import StaleElementReferenceException, NoSuchElementException, ElementClickInterceptedException
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from tools.browser_manager import BrowserManager
 from job_hunter.data_manager import DataManager
+from job_hunter.mission_state import MissionProgress
+from tools.human_actions import human_scroll, jitter_mouse, type_human_like, random_wait
 
 class JobApplier:
     """Handles automated Easy Apply for LinkedIn and Xing."""
@@ -96,6 +100,12 @@ class JobApplier:
     def random_sleep(self, min_sec=2, max_sec=5):
         time.sleep(random.uniform(min_sec, max_sec))
     
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(2),
+        retry=retry_if_exception_type((StaleElementReferenceException, NoSuchElementException, ElementClickInterceptedException)),
+        reraise=False
+    )
     def click_element(self, selector, by=By.CSS_SELECTOR, timeout=5):
         """Wait for element and click it (with JS fallback)."""
         try:
@@ -109,12 +119,18 @@ class JobApplier:
             try:
                 elem = self.driver.find_element(by, selector)
                 self.driver.execute_script("arguments[0].click();", elem)
-                print(f"[Applier] JS Clicked: {selector}")
+                logger.debug(f"[Applier] JS Clicked: {selector}")
                 return True
             except:
-                print(f"[Applier] Failed to click: {selector}")
+                logger.warning(f"[Applier] Failed to click: {selector}")
                 return False
     
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_fixed(1),
+        retry=retry_if_exception_type(StaleElementReferenceException),
+        reraise=False
+    )
     def find_element_safe(self, selector, by=By.CSS_SELECTOR, timeout=5):
         """Find element without throwing exception."""
         try:
@@ -153,7 +169,7 @@ class JobApplier:
                 btn = self.driver.find_element(By.CSS_SELECTOR, sel)
                 if btn.is_displayed():
                     btn.click()
-                    print("[Applier] 🍪 Cookie banner handled (CSS)")
+                    logger.info("[Applier] 🍪 Cookie banner handled (CSS)")
                     return True
             except: pass
 
@@ -162,7 +178,7 @@ class JobApplier:
                 btn = self.driver.find_element(By.XPATH, xpath)
                 if btn.is_displayed():
                     btn.click()
-                    print("[Applier] 🍪 Cookie banner handled (XPath)")
+                    logger.info("[Applier] 🍪 Cookie banner handled (XPath)")
                     return True
             except: pass
         return False
@@ -244,19 +260,19 @@ class JobApplier:
     def is_easy_apply_linkedin(self, job_url=None):
         """Check if a LinkedIn job has Easy Apply button."""
         if job_url:
-            print(f"[LinkedIn] Checking Easy Apply: {job_url}")
+            logger.info(f"[LinkedIn] Checking Easy Apply: {job_url}")
             self.driver.get(job_url)
             self.random_sleep(4, 7)  # Wait longer for page to load
 
         # 1. Check for "Already Applied" or "Expired"
         is_applied, applied_ind = self._is_applied_check()
         if is_applied:
-            print(f"[LinkedIn] ⏭️ Job already applied (detected via {applied_ind}).")
+            logger.info(f"[LinkedIn] ⏭️ Job already applied (detected via {applied_ind}).")
             return False
 
         is_expired, expired_ind = self._is_expired_check()
         if is_expired:
-            print(f"[LinkedIn] ⏭️ Job expired/closed (detected via {expired_ind}).")
+            logger.info(f"[LinkedIn] ⏭️ Job expired/closed (detected via {expired_ind}).")
             return False
 
         # 2. Find Easy Apply Button
@@ -306,7 +322,7 @@ class JobApplier:
                                 apply_keywords = ["easy", "apply", "bewerben", "bewerbung", "candidature", "schnellbewerbung"]
                                 if any(k in btn_text or k in aria for k in apply_keywords):
                                     if not any(k in btn_text for k in ["website", "extern", "employer", "company site"]):
-                                        print(f"[LinkedIn] ✓ Easy Apply detected in {area}")
+                                        logger.info(f"[LinkedIn] ✓ Easy Apply detected in {area}")
                                         return True
                     except: continue
             except: continue
@@ -322,29 +338,29 @@ class JobApplier:
                     apply_keywords = ["easy", "apply", "bewerben", "bewerbung", "candidature", "schnellbewerbung"]
                     if any(k in btn_text or k in aria for k in apply_keywords):
                         if not any(k in btn_text for k in ["website", "extern", "employer", "company site"]):
-                            print(f"[LinkedIn] ✓ Easy Apply detected via Global Fallback")
+                            logger.info(f"[LinkedIn] ✓ Easy Apply detected via Global Fallback")
                             return True
         except: pass
 
-        print("[LinkedIn] ✗ Not Easy Apply (external apply required)")
+        logger.info("[LinkedIn] ✗ Not Easy Apply (external apply required)")
         return False
     
     def is_easy_apply_xing(self, job_url=None):
         """Check if a Xing job has Easy Apply (not external redirect)."""
         if job_url:
-            print(f"[Xing] Checking Easy Apply: {job_url}")
+            logger.info(f"[Xing] Checking Easy Apply: {job_url}")
             self.driver.get(job_url)
             self.random_sleep(2, 4)
         
         # 1. Check for Already Applied or Expired
         is_applied, applied_ind = self._is_applied_check()
         if is_applied:
-            print(f"[Xing] ⏭️ Already applied (detected via {applied_ind})")
+            logger.info(f"[Xing] ⏭️ Already applied (detected via {applied_ind})")
             return False
 
         is_expired, expired_ind = self._is_expired_check()
         if is_expired:
-            print(f"[Xing] ⏭️ Job expired/closed (detected via {expired_ind}).")
+            logger.info(f"[Xing] ⏭️ Job expired/closed (detected via {expired_ind}).")
             return False
 
         # Keywords that indicate EASY APPLY (internal application)
@@ -392,16 +408,16 @@ class JobApplier:
             btn = self.find_element_safe(selector, timeout=3)
             if btn:
                 btn_text = btn.text.lower().strip()
-                print(f"[Xing] Found button with text: '{btn_text}'")
+                logger.info(f"[Xing] Found button with text: '{btn_text}'")
                 
                 # Check if it's EXTERNAL (should reject)
                 if any(ext in btn_text for ext in external_keywords):
-                    print("[Xing] ✗ External apply detected - skipping")
+                    logger.info("[Xing] ✗ External apply detected - skipping")
                     return False
                 
                 # Check if it's EASY APPLY
                 if any(easy in btn_text for easy in easy_apply_keywords):
-                    print("[Xing] ✓ Easy Apply detected!")
+                    logger.info("[Xing] ✓ Easy Apply detected!")
                     return True
         
         # XPath fallback - but still check text
@@ -419,14 +435,14 @@ class JobApplier:
                     
                     # Check for easy apply keywords
                     if any(easy in btn_text for easy in easy_apply_keywords):
-                        print(f"[Xing] ✓ Easy Apply detected via XPath: '{btn_text}'")
+                        logger.info(f"[Xing] ✓ Easy Apply detected via XPath: '{btn_text}'")
                         return True
                 except:
                     continue
         except:
             pass
         
-        print("[Xing] ✗ Not Easy Apply (external or no apply button found)")
+        logger.info("[Xing] ✗ Not Easy Apply (external or no apply button found)")
         return False
     # ==========================================
     # LINKEDIN EASY APPLY
@@ -449,7 +465,7 @@ class JobApplier:
                 if job_id: job_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
             except: pass
 
-        print(f"[LinkedIn] Navigating to: {job_url}")
+        logger.info(f"[LinkedIn] Navigating to: {job_url}")
         self.driver.get(job_url)
         self.random_sleep(6, 9) # Give it plenty of time to load and redirect
         self.handle_cookie_banners()
@@ -457,12 +473,12 @@ class JobApplier:
         # 2. Check for "Already Applied" or "Expired"
         is_applied, applied_ind = self._is_applied_check()
         if is_applied:
-            print(f"[LinkedIn] ⏭️ Job already applied (detected via {applied_ind}).")
+            logger.info(f"[LinkedIn] ⏭️ Job already applied (detected via {applied_ind}).")
             return True, "Already applied.", True
 
         is_expired, expired_ind = self._is_expired_check()
         if is_expired:
-            print(f"[LinkedIn] ⏭️ Job expired/closed (detected via {expired_ind}).")
+            logger.info(f"[LinkedIn] ⏭️ Job expired/closed (detected via {expired_ind}).")
             return False, "Job expired or no longer accepting applications.", False
 
         # 3. Detection step (unless skipped)
@@ -542,7 +558,7 @@ class JobApplier:
                                         try: btn.click()
                                         except: self.driver.execute_script("arguments[0].click();", btn)
                                         clicked = True
-                                        print(f"[LinkedIn] Clicked Easy Apply in Detail Area ({area}) -> {sel}")
+                                        logger.info(f"[LinkedIn] Clicked Easy Apply in Detail Area ({area}) -> {sel}")
                                         break
                         if clicked: break
                     except: continue
@@ -565,7 +581,7 @@ class JobApplier:
                                 try: btn.click()
                                 except: self.driver.execute_script("arguments[0].click();", btn)
                                 clicked = True
-                                print(f"[LinkedIn] Clicked Easy Apply via Global CSS")
+                                logger.info(f"[LinkedIn] Clicked Easy Apply via Global CSS")
                                 break
             except: pass
 
@@ -587,7 +603,7 @@ class JobApplier:
                     if btn and btn.is_displayed():
                         self.driver.execute_script("arguments[0].click();", btn)
                         clicked = True
-                        print(f"[LinkedIn] Clicked Easy Apply via XPath: {xpath}")
+                        logger.info(f"[LinkedIn] Clicked Easy Apply via XPath: {xpath}")
                         break
                 except: pass
         
@@ -597,13 +613,13 @@ class JobApplier:
             full_text = self.driver.page_source.lower()
             is_applied, applied_ind = self._is_applied_check(text=full_text)
             if is_applied:
-                print(f"[LinkedIn] ⏭️ Job already applied (late detection via {applied_ind}).")
+                logger.info(f"[LinkedIn] ⏭️ Job already applied (late detection via {applied_ind}).")
                 return True, "Already applied.", True
             is_expired, expired_ind = self._is_expired_check(text=full_text)
             if is_expired:
-                print(f"[LinkedIn] ⏭️ Job expired (late detection via {expired_ind}).")
+                logger.info(f"[LinkedIn] ⏭️ Job expired (late detection via {expired_ind}).")
                 return False, "Job expired or no longer accepting applications.", False
-            print("[LinkedIn] ❌ Easy Apply button not found (Selectors + XPath failed).")
+            logger.info("[LinkedIn] ❌ Easy Apply button not found (Selectors + XPath failed).")
             return False, "Easy Apply button not found. May require external apply.", False
         
         # Wait briefly for modal to appear (animation)
@@ -626,7 +642,7 @@ class JobApplier:
         if phone_input and not phone_input.get_attribute("value"):
             phone_input.clear()
             phone_input.send_keys(self.phone_number)
-            print("[LinkedIn] Filled phone number.")
+            logger.info("[LinkedIn] Filled phone number.")
         
         # 2. Resume Upload
         if self.resume_path:
@@ -634,9 +650,9 @@ class JobApplier:
             if file_input:
                 try:
                     file_input.send_keys(self.resume_path)
-                    print("[LinkedIn] Uploaded resume.")
+                    logger.info("[LinkedIn] Uploaded resume.")
                 except Exception as e:
-                    print(f"[LinkedIn] Resume upload failed: {e}")
+                    logger.info(f"[LinkedIn] Resume upload failed: {e}")
         
         # 3. Handle TEXT INPUTS and COMBOBOXES with labels
         try:
@@ -709,8 +725,8 @@ class JobApplier:
                             input_el.send_keys(Keys.CONTROL + "a")
                             input_el.send_keys(Keys.BACKSPACE)
 
-                        input_el.send_keys(answer)
-                        print(f"[LinkedIn] Answered '{label_text}' → '{answer}'")
+                        type_human_like(input_el, answer)
+                        logger.info(f"[LinkedIn] Answered '{label_text}' → '{answer}'")
 
                         # Handle LinkedIn's typeahead/combobox (e.g. City/Location)
                         # These fields require selecting an option from the dropdown even if text is correct
@@ -743,7 +759,7 @@ class JobApplier:
                                                 # Try clicking directly, then with JS
                                                 try: opt.click()
                                                 except: self.driver.execute_script("arguments[0].click();", opt)
-                                                print(f"[LinkedIn] ✅ Selected dropdown option for '{label_text}'")
+                                                logger.info(f"[LinkedIn] ✅ Selected dropdown option for '{label_text}'")
                                                 found = True
                                                 break
                                         if found: break
@@ -772,7 +788,7 @@ class JobApplier:
                         if default_answer:
                             input_el.clear()
                             input_el.send_keys(default_answer)
-                            print(f"[LinkedIn] Filled '{label_text}' → '{default_answer}' (default)")
+                            logger.info(f"[LinkedIn] Filled '{label_text}' → '{default_answer}' (default)")
 
                             # Also handle typeahead for default answers
                             try:
@@ -783,17 +799,22 @@ class JobApplier:
                                         if opt.is_displayed():
                                             try: opt.click()
                                             except: self.driver.execute_script("arguments[0].click();", opt)
-                                            print(f"[LinkedIn] ✅ Selected dropdown option for default '{label_text}'")
+                                            logger.info(f"[LinkedIn] ✅ Selected dropdown option for default '{label_text}'")
                                             break
                             except:
                                 pass
                         else:
                             # Interactive mode: Alert user and wait for them to fill the field
-                            print(f"[LinkedIn] 🔔 UNKNOWN QUESTION: '{label_text}'")
-                            print(f"[LinkedIn] ⏳ Please fill this field on LinkedIn. Bot will capture your answer...")
+                            logger.info(f"[LinkedIn] 🔔 UNKNOWN QUESTION: '{label_text}'")
+
+                            # Update global mission status
+                            progress = MissionProgress.load()
+                            if progress.is_active:
+                                progress.update(pending_question=label_text)
+                            logger.info(f"[LinkedIn] ⏳ Please fill this field on LinkedIn. Bot will capture your answer...")
                             
                             # Interactive mode: Alert user and wait for them to fill the field
-                            print(f"[LinkedIn] 🔔 UNKNOWN QUESTION: '{label_text}'")
+                            logger.info(f"[LinkedIn] 🔔 UNKNOWN QUESTION: '{label_text}'")
                             
                             # 1. Beep
                             try:
@@ -801,7 +822,7 @@ class JobApplier:
                                     import winsound
                                     winsound.Beep(1000, 1000)
                                 else:
-                                    print('\a') # Terminal beep
+                                    logger.info('\a') # Terminal beep
                             except: pass
                             
                             # 2. Log to file
@@ -818,7 +839,7 @@ class JobApplier:
                                     with open(q_file, "w", encoding="utf-8") as f:
                                         json.dump(qs, f, indent=2, ensure_ascii=False)
                             except Exception as e:
-                                print(f"Failed to log question: {e}")
+                                logger.info(f"Failed to log question: {e}")
 
                             # Inject a highly visible prompt and beep logic into the browser
                             try:
@@ -884,7 +905,7 @@ class JobApplier:
                             except: pass
 
                             # Also try terminal beep as fallback
-                            print('\a')
+                            logger.info('\a')
                             
                             # Wait for user to fill the field (poll every 2 seconds, max 120 seconds for user comfort)
                             max_wait = 120
@@ -897,11 +918,16 @@ class JobApplier:
                                     current_value = input_el.get_attribute("value")
                                     if current_value and current_value.strip():
                                         user_answer = current_value.strip()
-                                        print(f"[LinkedIn] ✅ Captured answer: '{user_answer}'")
+                                        logger.info(f"[LinkedIn] ✅ Captured answer: '{user_answer}'")
                                         
                                         # Save to Q&A config automatically
                                         self.db.save_qa_answer(label_text, user_answer)
-                                        print(f"[LinkedIn] 💾 Saved Q&A: '{label_text}' → '{user_answer}'")
+                                        logger.info(f"[LinkedIn] 💾 Saved Q&A: '{label_text}' → '{user_answer}'")
+
+                                        # Clear pending question in state
+                                        progress = MissionProgress.load()
+                                        if progress.is_active:
+                                            progress.update(pending_question=None)
 
                                         # Remove overlay
                                         try: self.driver.execute_script("var el = document.getElementById('bot-prompt-overlay'); if(el) el.remove();")
@@ -919,7 +945,7 @@ class JobApplier:
                                 # Remove overlay
                                 try: self.driver.execute_script("var el = document.getElementById('bot-prompt-overlay'); if(el) el.remove();")
                                 except: pass
-                                print(f"[LinkedIn] ⚠️ No answer provided, logging as unknown...")
+                                logger.info(f"[LinkedIn] ⚠️ No answer provided, logging as unknown...")
                                 self.db.log_unknown_question(label_text, self.current_job_title, self.current_company)
                                 q_entry = {"question": label_text, "type": "text", "job": self.current_job_title}
                                 if q_entry not in self.session_unknown_questions:
@@ -969,7 +995,7 @@ class JobApplier:
                         except:
                             label_text = "dropdown"
                     
-                    print(f"[LinkedIn] Dropdown found: '{label_text}'")
+                    logger.info(f"[LinkedIn] Dropdown found: '{label_text}'")
                     
                     # Get answer from config
                     answer = self.db.get_answer_for_question(label_text)
@@ -985,14 +1011,14 @@ class JobApplier:
                         for opt in options:
                             if answer.lower() in opt.text.lower():
                                 sel_obj.select_by_visible_text(opt.text)
-                                print(f"[LinkedIn] ✅ Selected saved answer '{opt.text}' for '{label_text}'")
+                                logger.info(f"[LinkedIn] ✅ Selected saved answer '{opt.text}' for '{label_text}'")
                                 matched = True
                                 break
                         if matched:
                             continue
                     
                     # No saved answer - use smart selection and log the question
-                    print(f"[LinkedIn] ⚠️ No saved answer for: '{label_text}', using smart selection...")
+                    logger.info(f"[LinkedIn] ⚠️ No saved answer for: '{label_text}', using smart selection...")
                     self.db.log_unknown_question(label_text, self.current_job_title, self.current_company)
                     
                     # Smart selection: prefer higher values, avoid "Gar nicht", "Keine", "0"
@@ -1005,7 +1031,7 @@ class JobApplier:
                         opt_text = opt.text.lower().strip()
                         if any(p in opt_text for p in prefer_terms):
                             sel_obj.select_by_visible_text(opt.text)
-                            print(f"[LinkedIn] Selected preferred '{opt.text}' for dropdown")
+                            logger.info(f"[LinkedIn] Selected preferred '{opt.text}' for dropdown")
                             selected = True
                             break
                     
@@ -1015,16 +1041,16 @@ class JobApplier:
                             opt_text = opt.text.lower().strip()
                             if opt_text and not any(n in opt_text for n in negative_terms):
                                 sel_obj.select_by_visible_text(opt.text)
-                                print(f"[LinkedIn] Selected '{opt.text}' for dropdown (highest)")
+                                logger.info(f"[LinkedIn] Selected '{opt.text}' for dropdown (highest)")
                                 selected = True
                                 break
                     
                     # Fallback: just select first if nothing else worked
                     if not selected and len(options) > 1:
                         sel_obj.select_by_index(1)
-                        print(f"[LinkedIn] Selected fallback '{options[1].text}' for dropdown")
+                        logger.info(f"[LinkedIn] Selected fallback '{options[1].text}' for dropdown")
                 except Exception as e:
-                    print(f"[LinkedIn] Dropdown error: {str(e)[:50]}")
+                    logger.info(f"[LinkedIn] Dropdown error: {str(e)[:50]}")
                     continue
         except:
             pass
@@ -1066,7 +1092,7 @@ class JobApplier:
                                     label_el = radio.find_element(By.XPATH, "./following-sibling::label | ../label")
                                     if answer.lower() in label_el.text.lower():
                                         self.driver.execute_script("arguments[0].click();", radio)
-                                        print(f"[LinkedIn] Selected '{label_el.text}' for '{question_text}'")
+                                        logger.info(f"[LinkedIn] Selected '{label_el.text}' for '{question_text}'")
                                         options_found = True
                                         break
                                 except: continue
@@ -1079,7 +1105,7 @@ class JobApplier:
                                     label_el = radio.find_element(By.XPATH, "./following-sibling::label | ../label")
                                     if any(y in label_el.text.lower() for y in yes_labels):
                                         self.driver.execute_script("arguments[0].click();", radio)
-                                        print(f"[LinkedIn] Selected 'Yes' option for '{question_text}'")
+                                        logger.info(f"[LinkedIn] Selected 'Yes' option for '{question_text}'")
                                         options_found = True
                                         break
                                 except: continue
@@ -1087,7 +1113,7 @@ class JobApplier:
                             if not options_found:
                                 # Fallback to first option
                                 self.driver.execute_script("arguments[0].click();", radios[0])
-                                print(f"[LinkedIn] Auto-selected first option for '{question_text}'")
+                                logger.info(f"[LinkedIn] Auto-selected first option for '{question_text}'")
                                 self.db.log_unknown_question(question_text, self.current_job_title, self.current_company)
                         continue # Done with this group
 
@@ -1103,7 +1129,7 @@ class JobApplier:
                             for btn in buttons:
                                 if answer.lower() in btn.text.lower():
                                     btn.click()
-                                    print(f"[LinkedIn] Clicked button '{btn.text}' for '{question_text}'")
+                                    logger.info(f"[LinkedIn] Clicked button '{btn.text}' for '{question_text}'")
                                     btn_clicked = True
                                     break
                         
@@ -1112,13 +1138,13 @@ class JobApplier:
                             for btn in buttons:
                                 if any(y in btn.text.lower() for y in yes_labels):
                                     btn.click()
-                                    print(f"[LinkedIn] Clicked 'Yes' button for '{question_text}'")
+                                    logger.info(f"[LinkedIn] Clicked 'Yes' button for '{question_text}'")
                                     btn_clicked = True
                                     break
 
                             if not btn_clicked:
                                 buttons[0].click()
-                                print(f"[LinkedIn] Clicked first button for '{question_text}'")
+                                logger.info(f"[LinkedIn] Clicked first button for '{question_text}'")
                                 self.db.log_unknown_question(question_text, self.current_job_title, self.current_company)
                 except:
                     pass
@@ -1137,7 +1163,7 @@ class JobApplier:
                     # Auto-check consent boxes
                     if any(t in label_text for t in ["agree", "terms", "consent", "einwillig", "zustimm", "akzeptier"]):
                         self.driver.execute_script("arguments[0].click();", cb)
-                        print("[LinkedIn] Checked consent checkbox")
+                        logger.info("[LinkedIn] Checked consent checkbox")
                 except:
                     continue
         except:
@@ -1156,19 +1182,19 @@ class JobApplier:
             return False, "Max applications reached for this session.", False
         
         # 1. Navigation
-        print(f"[Xing] Navigating to: {job_url}")
+        logger.info(f"[Xing] Navigating to: {job_url}")
         self.driver.get(job_url)
         self.random_sleep(4, 7)
 
         # 2. Check for Already Applied or Expired
         is_applied, applied_ind = self._is_applied_check()
         if is_applied:
-            print(f"[Xing] ⏭️ Already applied (detected via {applied_ind})")
+            logger.info(f"[Xing] ⏭️ Already applied (detected via {applied_ind})")
             return True, "Already applied.", True
 
         is_expired, expired_ind = self._is_expired_check()
         if is_expired:
-            print(f"[Xing] ⏭️ Job expired/closed (detected via {expired_ind}).")
+            logger.info(f"[Xing] ⏭️ Job expired/closed (detected via {expired_ind}).")
             return False, "Job expired or no longer accepting applications.", False
 
         # 3. Detection step (unless skipped)
@@ -1200,7 +1226,7 @@ class JobApplier:
                     if apply_btn.is_displayed():
                         apply_btn.click()
                         clicked = True
-                        print(f"[Xing] Clicked Apply button via XPath: {query}")
+                        logger.info(f"[Xing] Clicked Apply button via XPath: {query}")
                         break
                 except:
                     continue
@@ -1217,10 +1243,10 @@ class JobApplier:
             if file_input:
                 try:
                     file_input.send_keys(self.resume_path)
-                    print("[Xing] Uploaded resume.")
+                    logger.info("[Xing] Uploaded resume.")
                     self.random_sleep(1, 2)
                 except Exception as e:
-                    print(f"[Xing] Resume upload failed: {e}")
+                    logger.info(f"[Xing] Resume upload failed: {e}")
         
         # 3. Submit
         submit_selectors = [
@@ -1262,19 +1288,19 @@ class JobApplier:
     def is_easy_apply_indeed(self, job_url=None):
         """Check if an Indeed job has Schnellbewerbung."""
         if job_url:
-            print(f"[Indeed] Checking Easy Apply: {job_url}")
+            logger.info(f"[Indeed] Checking Easy Apply: {job_url}")
             self.driver.get(job_url)
             self.random_sleep(3, 5)
 
         # 1. Check for Already Applied or Expired
         is_applied, applied_ind = self._is_applied_check()
         if is_applied:
-            print(f"[Indeed] ⏭️ Already applied (detected via {applied_ind})")
+            logger.info(f"[Indeed] ⏭️ Already applied (detected via {applied_ind})")
             return False
 
         is_expired, expired_ind = self._is_expired_check()
         if is_expired:
-            print(f"[Indeed] ⏭️ Job expired/closed (detected via {expired_ind}).")
+            logger.info(f"[Indeed] ⏭️ Job expired/closed (detected via {expired_ind}).")
             return False
 
         # Look for buttons that say "Schnellbewerbung" or "Easily Apply"
@@ -1291,19 +1317,19 @@ class JobApplier:
             return False, "Max applications reached.", False
 
         # 1. Navigation
-        print(f"[Indeed] Navigating to: {job_url}")
+        logger.info(f"[Indeed] Navigating to: {job_url}")
         self.driver.get(job_url)
         self.random_sleep(4, 7)
 
         # 2. Check for Already Applied or Expired
         is_applied, applied_ind = self._is_applied_check()
         if is_applied:
-            print(f"[Indeed] ⏭️ Already applied (detected via {applied_ind})")
+            logger.info(f"[Indeed] ⏭️ Already applied (detected via {applied_ind})")
             return True, "Already applied.", True
 
         is_expired, expired_ind = self._is_expired_check()
         if is_expired:
-            print(f"[Indeed] ⏭️ Job expired/closed (detected via {expired_ind}).")
+            logger.info(f"[Indeed] ⏭️ Job expired/closed (detected via {expired_ind}).")
             return False, "Job expired or no longer accepting applications.", False
 
         # 3. Detection step (unless skipped)
@@ -1315,7 +1341,7 @@ class JobApplier:
         self.handle_cookie_banners()
 
         # 1. Find and Click Apply Button
-        print("[Indeed] Looking for Apply Button...")
+        logger.info("[Indeed] Looking for Apply Button...")
         
         # New robust selectors list
         apply_selectors = [
@@ -1333,7 +1359,7 @@ class JobApplier:
             try:
                 btn = self.driver.find_element(By.CSS_SELECTOR, sel)
                 if btn.is_displayed():
-                    print(f"[Indeed] Found Apply Button via CSS: {sel}")
+                    logger.info(f"[Indeed] Found Apply Button via CSS: {sel}")
                     btn.click()
                     clicked = True
                     break
@@ -1352,23 +1378,18 @@ class JobApplier:
                 try:
                     btn = self.driver.find_element(By.XPATH, sel)
                     if btn.is_displayed():
-                        print(f"[Indeed] Found Apply Button via XPath: {sel}")
+                        logger.info(f"[Indeed] Found Apply Button via XPath: {sel}")
                         btn.click()
                         clicked = True
                         break
                 except: continue
 
         if not clicked:
-            print("[Indeed] ❌ Apply button NOT found.")
-            # Dump HTML for debugging
-            try:
-                with open("indeed_debug_dump.html", "w", encoding="utf-8") as f:
-                    f.write(self.driver.page_source)
-                print("[Indeed] 📸 DUMPED PAGE SOURCE to 'indeed_debug_dump.html'")
-            except: pass
+            logger.error("[Indeed] ❌ Apply button NOT found.")
+            save_debug_artifact(self.driver, "indeed_apply_failed")
             return False, "Indeed Apply button not found.", False
 
-        print("[Indeed] Apply button clicked. Waiting for modal/iframe...")
+        logger.info("[Indeed] Apply button clicked. Waiting for modal/iframe...")
         self.random_sleep(3, 5)
 
         # Indeed often uses an IFRAME for the application form
@@ -1383,19 +1404,19 @@ class JobApplier:
                 title = (iframe.get_attribute("title") or "").lower()
                 if "indeed" in src or "apply" in title or "bewerbung" in title:
                     self.driver.switch_to.frame(iframe)
-                    print(f"[Indeed] Switched to application iframe (src: {src[:30]}...)")
+                    logger.info(f"[Indeed] Switched to application iframe (src: {src[:30]}...)")
                     iframe_found = True
                     break
         except Exception as e:
-            print(f"[Indeed] Iframe check warning: {e}")
+            logger.info(f"[Indeed] Iframe check warning: {e}")
 
         if not iframe_found:
-             print("[Indeed] No specific application iframe found. Assuming form is in main window or new tab.")
+             logger.info("[Indeed] No specific application iframe found. Assuming form is in main window or new tab.")
 
         # 2. Fill Fields (Multi-step form)
         max_steps = 15
         for step in range(max_steps):
-            print(f"[Indeed] processing step {step+1}...")
+            logger.info(f"[Indeed] processing step {step+1}...")
             self.random_sleep(2, 3)
 
             # Check for success indicators
@@ -1405,7 +1426,7 @@ class JobApplier:
                 "gelungen", "great, you're done", "application sent"
             ]
             if any(s in page_source_lower for s in success_indicators):
-                print("[Indeed] ✓ Application submitted successfully!")
+                logger.info("[Indeed] ✓ Application submitted successfully!")
                 self.applied_count += 1
                 try: self.driver.switch_to.default_content()
                 except: pass
@@ -1416,7 +1437,7 @@ class JobApplier:
                 try:
                     resume_input = self.driver.find_element(By.CSS_SELECTOR, "input[type='file']")
                     resume_input.send_keys(self.resume_path)
-                    print("[Indeed] Uploaded resume.")
+                    logger.info("[Indeed] Uploaded resume.")
                     self.random_sleep(2, 3) # Wait for upload
                 except: pass
 
@@ -1448,7 +1469,7 @@ class JobApplier:
                             # Use DB for answer mapping
                             answer = self.db.get_answer_for_question(label_text)
                             if answer:
-                                print(f"[Indeed] Filling '{label_text}' with '{answer}'")
+                                logger.info(f"[Indeed] Filling '{label_text}' with '{answer}'")
                                 inp.clear()
                                 inp.send_keys(answer)
                     except: pass
@@ -1482,7 +1503,7 @@ class JobApplier:
                     if not btn.is_displayed(): continue
                     txt = btn.text.lower().strip()
                     if any(t in txt for t in target_actions):
-                        print(f"[Indeed] Clicking Action Button: '{txt}'")
+                        logger.info(f"[Indeed] Clicking Action Button: '{txt}'")
                         try:
                             btn.click()
                         except:
@@ -1492,7 +1513,7 @@ class JobApplier:
                 except: continue
                 
             if not button_found:
-                print(f"[Indeed] No obvious 'Next/Submit' button found in step {step+1}. Checking for success again next loop or stopping.")
+                logger.info(f"[Indeed] No obvious 'Next/Submit' button found in step {step+1}. Checking for success again next loop or stopping.")
                 # Sometimes it's just loading?
                 self.random_sleep(2, 3)
             
@@ -1566,7 +1587,7 @@ class JobApplier:
         safe_phrases = [s.lower() for s in blacklist.get("safe_phrases", []) if s]
         
         def log(msg):
-            print(f"[LiveApply] {msg}")
+            logger.info(f"[LiveApply] {msg}")
             if callback:
                 callback(msg)
         
@@ -1620,6 +1641,7 @@ class JobApplier:
             max_cards_per_page = 50
             
             while applied_count < target_count and card_index < max_cards_per_page:
+                jitter_mouse(self.driver)
                 # Always re-fetch the job cards list (DOM may have changed)
                 try:
                     job_cards = self.driver.find_elements(By.CSS_SELECTOR, 
@@ -1941,7 +1963,7 @@ class JobApplier:
                             continue
                         
                         if any(k in txt for k in keywords):
-                            print(f"[LinkedIn] Recursive Found: '{b.text}' in Depth {depth}")
+                            logger.info(f"[LinkedIn] Recursive Found: '{b.text}' in Depth {depth}")
                             return b
                 except: pass
         except: pass
@@ -1957,7 +1979,7 @@ class JobApplier:
                         return found
                     self.driver.switch_to.parent_frame()
                 except Exception as e:
-                    print(f"[LinkedIn] Frame switch error: {e}")
+                    logger.info(f"[LinkedIn] Frame switch error: {e}")
                     try: self.driver.switch_to.parent_frame()
                     except: pass
         except: pass
@@ -1970,7 +1992,7 @@ class JobApplier:
         Matches logic from reference project 'linkedin-easyapply-ai-main' but with added safety checks.
         """
         import time
-        print("[LinkedIn] Entering Button-Driven Application Loop...")
+        logger.info("[LinkedIn] Entering Button-Driven Application Loop...")
         
         # 0. Check for New Tab/Window (Crucial!)
         try:
@@ -1979,20 +2001,20 @@ class JobApplier:
             if len(all_handles) > 1:
                 # If a new window appeared recently, switch to it
                 if current_handle != all_handles[-1]:
-                    print(f"[LinkedIn] ⚠️ New window detected. Switching from {current_handle} to {all_handles[-1]}")
+                    logger.info(f"[LinkedIn] ⚠️ New window detected. Switching from {current_handle} to {all_handles[-1]}")
                     self.driver.switch_to.window(all_handles[-1])
         except Exception as e:
-            print(f"[LinkedIn] Window handle check failed: {e}")
+            logger.info(f"[LinkedIn] Window handle check failed: {e}")
 
         # 0.5 WAIT FOR MODAL TO APPEAR
         try:
-            print("[LinkedIn] Waiting for application modal to render...")
+            logger.info("[LinkedIn] Waiting for application modal to render...")
             WebDriverWait(self.driver, 5).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, ".artdeco-modal, [role='dialog'], .jobs-easy-apply-modal"))
             )
-            print("[LinkedIn] Modal detected.")
+            logger.info("[LinkedIn] Modal detected.")
         except:
-            print("[LinkedIn] ⚠️ Modal not detected after 5s wait. Proceeding anyway but might fail.")
+            logger.info("[LinkedIn] ⚠️ Modal not detected after 5s wait. Proceeding anyway but might fail.")
 
         max_attempts = 25
         attempts = 0
@@ -2011,7 +2033,7 @@ class JobApplier:
                 ]
                 page_text = self.driver.page_source.lower()
                 if any(kw in page_text for kw in success_keywords) or "application was sent" in page_text or "sent to" in page_text:
-                    print("[LinkedIn] ✅ Application success detected via page text.")
+                    logger.info("[LinkedIn] ✅ Application success detected via page text.")
                     try:
                         # Try to find "Done" or "Dismiss"
                         done_btns = self.driver.find_elements(By.CSS_SELECTOR, "button[aria-label*='Done'], button.artdeco-button--primary, button[aria-label*='Dismiss'], .artdeco-modal__dismiss")
@@ -2041,7 +2063,7 @@ class JobApplier:
                         if b.is_displayed():
                             visible_btns.append(b)
                             # DEBUG LOG
-                            print(f"[LinkedIn DEBUG] Found visible btn: Tag={b.tag_name}, Text='{b.text}'")
+                            logger.info(f"[LinkedIn DEBUG] Found visible btn: Tag={b.tag_name}, Text='{b.text}'")
                     except: pass
                 
                 if visible_btns:
@@ -2053,7 +2075,7 @@ class JobApplier:
                 try:
                     iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
                     if iframes:
-                        print(f"[LinkedIn DEBUG] Checking {len(iframes)} iframes...")
+                        logger.info(f"[LinkedIn DEBUG] Checking {len(iframes)} iframes...")
                         for frame in iframes:
                             try:
                                 self.driver.switch_to.frame(frame)
@@ -2061,7 +2083,7 @@ class JobApplier:
                                 for b in f_btns:
                                     if b.is_displayed():
                                         potential_buttons.append(b)
-                                        print(f"[LinkedIn DEBUG] Found iframe btn: Tag={b.tag_name}, Text='{b.text}'")
+                                        logger.info(f"[LinkedIn DEBUG] Found iframe btn: Tag={b.tag_name}, Text='{b.text}'")
                                 if potential_buttons:
                                     # Stay in this frame if we found buttons!
                                     break 
@@ -2071,11 +2093,11 @@ class JobApplier:
                 except: pass
             
             if not potential_buttons:
-                print(f"[LinkedIn] No visible primary buttons found in Main or Iframes. Attempt {attempts}/{max_attempts}")
+                logger.info(f"[LinkedIn] No visible primary buttons found in Main or Iframes. Attempt {attempts}/{max_attempts}")
                 
                 # Dump logic moved to end of loop to cover all failure cases
                 if attempts > 10:
-                    print("[LinkedIn] ⚠️ No buttons found for 10+ steps and no success msg. Assuming failed/closed.")
+                    logger.info("[LinkedIn] ⚠️ No buttons found for 10+ steps and no success msg. Assuming failed/closed.")
                     return False
                 continue
             
@@ -2092,7 +2114,7 @@ class JobApplier:
                 txt = b.text.lower().strip()
                 if any(k in txt for k in target_keywords):
                     action_btn = b
-                    print(f"[LinkedIn] Matched Action Button: '{txt}'")
+                    logger.info(f"[LinkedIn] Matched Action Button: '{txt}'")
                     break
             
             # Fallback: take any primary button that is NOT 'Easy Apply'
@@ -2101,12 +2123,12 @@ class JobApplier:
                     txt = b.text.lower()
                     if "easy apply" not in txt and "einfach bewerben" not in txt:
                         action_btn = b
-                        print(f"[LinkedIn] Matched Fallback Button: '{txt}'")
+                        logger.info(f"[LinkedIn] Matched Fallback Button: '{txt}'")
                         break
             
             # STRATEGY C: Search ALL buttons by text (if Primary Class failed)
             if not action_btn:
-                print("[LinkedIn] Strategy C: Searching ALL visible buttons for keywords...")
+                logger.info("[LinkedIn] Strategy C: Searching ALL visible buttons for keywords...")
                 try:
                     all_btns = self.driver.find_elements(By.TAG_NAME, "button")
                     for b in all_btns:
@@ -2114,14 +2136,14 @@ class JobApplier:
                             txt = b.text.lower().strip()
                             if any(k in txt for k in target_keywords):
                                 action_btn = b
-                                print(f"[LinkedIn] Strategy C Matched: '{b.text}' (Tag: {b.tag_name})")
+                                logger.info(f"[LinkedIn] Strategy C Matched: '{b.text}' (Tag: {b.tag_name})")
                                 break
                 except Exception as e:
-                    print(f"[LinkedIn] Strategy C failed: {e}")
+                    logger.info(f"[LinkedIn] Strategy C failed: {e}")
 
             # STRATEGY D: Recursive Iframe Search (Python)
             if not action_btn:
-                print("[LinkedIn] Strategy D: Recursive Iframe Search...")
+                logger.info("[LinkedIn] Strategy D: Recursive Iframe Search...")
                 self.driver.switch_to.default_content()
                 
                 # Check for fields first
@@ -2130,14 +2152,14 @@ class JobApplier:
                 
                 recurse_btn = self._recursive_iframe_search(target_keywords, depth=0, max_depth=3)
                 if recurse_btn:
-                    print(f"[LinkedIn] Strategy D Success: Found '{recurse_btn.text}'")
+                    logger.info(f"[LinkedIn] Strategy D Success: Found '{recurse_btn.text}'")
                     try: recurse_btn.click()
                     except: self.driver.execute_script("arguments[0].click();", recurse_btn)
                     found_action = True
                     
                     # Check if we clicked "Done" -> Success!
                     if any(x in recurse_btn.text.lower() for x in ['done', 'fertig', 'close', 'schließen']):
-                         print("[LinkedIn] ✅ 'Done' button clicked via Strategy D. Application Complete!")
+                         logger.info("[LinkedIn] ✅ 'Done' button clicked via Strategy D. Application Complete!")
                          return True
 
                     time.sleep(4)
@@ -2147,7 +2169,7 @@ class JobApplier:
 
             # STRATEGY E: ULTIMATE JS SEARCH (Shadow DOM + Iframes Combined)
             if not action_btn and not found_action:
-                print("[LinkedIn] Strategy E: Ultimate JS Search (Shadow+Iframe)...")
+                logger.info("[LinkedIn] Strategy E: Ultimate JS Search (Shadow+Iframe)...")
                 
                 # Check for fields first
                 try: self._linkedin_fill_fields()
@@ -2216,34 +2238,29 @@ class JobApplier:
                 try:
                     res = self.driver.execute_script(js_script, target_keywords)
                     if res and res.startswith("Clicked"):
-                        print(f"[LinkedIn] Strategy E Success: {res}")
+                        logger.info(f"[LinkedIn] Strategy E Success: {res}")
                         found_action = True
                         
                         # Check if we clicked "Done" -> Success!
                         if any(x in res.lower() for x in ['done', 'fertig', 'close', 'schließen']):
-                            print("[LinkedIn] ✅ 'Done' button clicked via Strategy E. Application Complete!")
+                            logger.info("[LinkedIn] ✅ 'Done' button clicked via Strategy E. Application Complete!")
                             return True
                         
                         time.sleep(4)
                         continue
                 except Exception as e:
-                    print(f"[LinkedIn] Strategy E Error: {e}")
+                    logger.info(f"[LinkedIn] Strategy E Error: {e}")
 
             if not action_btn and not found_action:
-                print("[LinkedIn] Visible buttons found but none matched Action or Fallback logic.")
+                logger.warning("[LinkedIn] Visible buttons found but none matched Action or Fallback logic.")
                 try:
-                    print([b.text for b in potential_buttons])
+                    logger.debug([b.text for b in potential_buttons])
                 except:
-                    print("[LinkedIn] (Some buttons became stale during printing)")
+                    logger.debug("[LinkedIn] (Some buttons became stale during printing)")
                 
                 # DUMP HTML FOR DEBUGGING
                 if attempts == 1 or attempts == 5:
-                    try:
-                        with open("debug_linkedin_dump.html", "w", encoding="utf-8") as f:
-                            f.write(self.driver.page_source)
-                        print("[LinkedIn] 📸 DUMPED PAGE SOURCE to 'debug_linkedin_dump.html'")
-                    except Exception as e:
-                        print(f"Failed to dump html: {e}")
+                    save_debug_artifact(self.driver, f"linkedin_modal_step_{attempts}")
 
             if action_btn:
                 btn_text = action_btn.text.strip()
@@ -2261,12 +2278,12 @@ class JobApplier:
                 
                 # If we clicked "Done", we are successful!
                 if any(k in btn_text.lower() for k in ['done', 'fertig']):
-                     print("[LinkedIn] ✅ Clicked Done/Fertig. Application Complete.")
+                     logger.info("[LinkedIn] ✅ Clicked Done/Fertig. Application Complete.")
                      return True
                 
                 # If we clicked "Close" AND we previously submitted, that's also success!
                 if submitted_clicked and any(k in btn_text.lower() for k in ['close', 'schließen', 'dismiss']):
-                     print("[LinkedIn] ✅ Clicked Close after Submit. Application Complete.")
+                     logger.info("[LinkedIn] ✅ Clicked Close after Submit. Application Complete.")
                      return True
                 
                 # 5. Check for Errors (Blocking)
@@ -2275,20 +2292,20 @@ class JobApplier:
                     errors = self.driver.find_elements(By.CSS_SELECTOR, ".artdeco-inline-feedback__message")
                     visible_errors = [e for e in errors if e.is_displayed()]
                     if visible_errors:
-                        print(f"[LinkedIn] ❌ Blocking Form Error: {visible_errors[0].text}")
+                        logger.info(f"[LinkedIn] ❌ Blocking Form Error: {visible_errors[0].text}")
                         return False
                 except: pass
                 
                 # If button was 'Submit', we might be done next loop
                 submit_hints = ['submit', 'senden', 'absenden', 'bewerben', 'einreichen']
                 if any(s in btn_text.lower() for s in submit_hints):
-                    print("[LinkedIn] Clicked Submit. Waiting for success...")
+                    logger.info("[LinkedIn] Clicked Submit. Waiting for success...")
                     submitted_clicked = True
                     time.sleep(4)
                     
             else:
-                print("[LinkedIn] Visible buttons found but none matched Action or Fallback logic.")
-                print([b.text for b in potential_buttons])
+                logger.info("[LinkedIn] Visible buttons found but none matched Action or Fallback logic.")
+                logger.info([b.text for b in potential_buttons])
             
         # Switch back to default content just in case
         try: self.driver.switch_to.default_content()
@@ -2342,7 +2359,7 @@ class JobApplier:
         safe_phrases = [s.lower() for s in blacklist.get("safe_phrases", []) if s]
         
         def log(msg):
-            print(f"[LiveApply-Xing] {msg}")
+            logger.info(f"[LiveApply-Xing] {msg}")
             if callback:
                 callback(msg)
         
@@ -2585,12 +2602,12 @@ class JobApplier:
                 is_active = "selected" in classes.lower() or "active" in classes.lower() or pressed.lower() == "true"
 
                 if not is_active:
-                    print(f"[LinkedIn] Easy Apply filter not active in UI (classes: {classes}, pressed: {pressed}), clicking it...")
+                    logger.info(f"[LinkedIn] Easy Apply filter not active in UI (classes: {classes}, pressed: {pressed}), clicking it...")
                     try:
                         # Sometimes clicking the button itself doesn't work if it's a pill with an inner span
                         self.driver.execute_script("arguments[0].click();", filter_btn)
                     except Exception as e:
-                        print(f"[LinkedIn] JS click failed: {e}")
+                        logger.info(f"[LinkedIn] JS click failed: {e}")
                         filter_btn.click()
 
                     self.random_sleep(4, 6) # Wait for results to refresh
@@ -2599,20 +2616,20 @@ class JobApplier:
                     try:
                         classes_after = filter_btn.get_attribute("class") or ""
                         if "selected" in classes_after.lower() or "active" in classes_after.lower():
-                            print("[LinkedIn] Easy Apply filter successfully activated.")
+                            logger.info("[LinkedIn] Easy Apply filter successfully activated.")
                         else:
-                            print(f"[LinkedIn] Warning: Easy Apply filter still doesn't look active after click (classes: {classes_after})")
+                            logger.info(f"[LinkedIn] Warning: Easy Apply filter still doesn't look active after click (classes: {classes_after})")
                     except: pass
 
                     return True
                 else:
-                    print("[LinkedIn] Easy Apply filter is already active in UI.")
+                    logger.info("[LinkedIn] Easy Apply filter is already active in UI.")
                     return True
             else:
-                print("[LinkedIn] Could not find Easy Apply filter button in UI.")
+                logger.info("[LinkedIn] Could not find Easy Apply filter button in UI.")
                 return False
         except Exception as e:
-            print(f"[LinkedIn] Error ensuring Easy Apply filter: {e}")
+            logger.info(f"[LinkedIn] Error ensuring Easy Apply filter: {e}")
             return False
 
     def live_apply_indeed(self, keyword, location, target_count=5, target_role=None, callback=None):
@@ -2658,7 +2675,7 @@ class JobApplier:
         safe_phrases = [s.lower() for s in blacklist.get("safe_phrases", []) if s]
         
         def log(msg):
-            print(f"[LiveApply-Indeed] {msg}")
+            logger.info(f"[LiveApply-Indeed] {msg}")
             if callback:
                 callback(msg)
         

@@ -312,33 +312,21 @@ def render_easy_apply_confirm(eligible_jobs, db):
     if c1.button("✅ Confirm Auto-Apply", type="primary"):
         st.session_state['show_easy_apply_confirm'] = False
 
-        from job_hunter.applier import JobApplier
-        applier = JobApplier(resume_path=easy_resume_path, phone_number=easy_phone)
+        from job_hunter.mission_manager import MissionManager
+        mm = MissionManager(db)
 
-        prog = st.progress(0)
-        status = st.empty()
-
+        status_box = st.empty()
         jobs_list = eligible_jobs.to_dict('records')
-        for i, job in enumerate(jobs_list):
-            url = job.get("link") or job.get("Web Address")
-            platform = job.get("Platform")
-            title = job.get("Job Title")
-            company = job.get("Company")
 
-            status.text(f"🚀 [{i+1}/{count}] Applying to {title} @ {company}...")
+        with st.spinner("Executing Batch Apply..."):
+            mm.run_batch_apply_mission(
+                eligible_jobs=jobs_list,
+                resume_path=easy_resume_path,
+                phone_number=easy_phone,
+                status_box=status_box
+            )
 
-            success, message, is_easy = applier.apply(url, platform, skip_detection=True, job_title=title, company=company)
-
-            if success:
-                st.session_state['applied_jobs'] = db.save_applied(f"{title}-{company}", job, {"auto_applied": True})
-            elif "expired" in message.lower() or "no longer accepting" in message.lower():
-                db.park_job(title, company, job)
-
-            prog.progress((i + 1) / count)
-
-        applier.close()
         st.success("🎉 Batch Apply Complete!")
-        db.archive_applied_jobs()
         st.rerun()
 
     if c2.button("❌ Cancel"):

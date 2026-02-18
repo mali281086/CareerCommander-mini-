@@ -1,28 +1,40 @@
 from abc import ABC, abstractmethod
-import time
-from tools.browser_manager import BrowserManager
+from typing import List, Optional, Dict, Any
+from job_hunter.models import JobRecord
+from tools.logger import logger
+from job_hunter.data_manager import DataManager
 
 class BaseScraper(ABC):
-    def __init__(self, profile_name="default"):
-        self.browser_manager = BrowserManager()
-        self.profile_name = profile_name
+    """Abstract base class for all job scrapers."""
 
-    @property
-    def driver(self):
-        return self.browser_manager.get_driver(profile_name=self.profile_name)
+    def __init__(self, driver=None):
+        self._driver = driver
+        self.platform_name = "Base"
+        self.db = DataManager()
+        self.selectors = self.db.load_selectors()
 
     @abstractmethod
-    def search(self, keyword, location, limit=10, easy_apply=False):
-        """
-        Scrape jobs.
-        :param keyword: Job title or keyword
-        :param location: Location
-        :param limit: Max number of jobs to fetch
-        :param easy_apply: If True, filter for Easy Apply jobs
-        :return: List of dictionaries
-        """
-        raise NotImplementedError
+    def search(self, keyword: str, location: str, limit: int = 10) -> List[JobRecord]:
+        """Search for jobs on the platform."""
+        pass
 
-    def random_sleep(self, min_s=2, max_s=5):
+    @abstractmethod
+    def fetch_details(self, job_url: str) -> Optional[str]:
+        """Fetch the full description for a job URL."""
+        pass
+
+    def random_sleep(self, min_sec=2, max_sec=5):
+        import time
         import random
-        time.sleep(random.uniform(min_s, max_s))
+        time.sleep(random.uniform(min_sec, max_sec))
+
+    def log(self, msg, level="info"):
+        full_msg = f"[{self.platform_name}] {msg}"
+        if level == "info":
+            logger.info(full_msg)
+        elif level == "error":
+            logger.error(full_msg)
+        elif level == "warning":
+            logger.warning(full_msg)
+        elif level == "debug":
+            logger.debug(full_msg)

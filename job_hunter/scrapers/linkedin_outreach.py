@@ -1,3 +1,4 @@
+from tools.logger import logger
 import time
 import urllib.parse
 from selenium.webdriver.common.by import By
@@ -41,7 +42,7 @@ class LinkedInOutreach:
             del params["keywords"]
 
         url = base_url + urllib.parse.urlencode(params)
-        print(f"[LinkedIn Outreach] Navigating to: {url}")
+        logger.info(f"[LinkedIn Outreach] Navigating to: {url}")
         self.driver.get(url)
         self.random_sleep(4, 7)
 
@@ -72,7 +73,7 @@ class LinkedInOutreach:
                         continue
 
                 except Exception as e:
-                    print(f"Error parsing connection: {e}")
+                    logger.info(f"Error parsing connection: {e}")
                     continue
 
             if len(results) < limit:
@@ -123,7 +124,7 @@ class LinkedInOutreach:
                 # Only click if not disabled
                 if send_btn.is_enabled():
                     # send_btn.click() # COMMENTED OUT FOR SAFETY DURING TESTING, but implementation is there
-                    print(f"Would send message to {connection['name']}")
+                    logger.info(f"Would send message to {connection['name']}")
                     # For real use:
                     send_btn.click()
                     self.random_sleep(1, 2)
@@ -133,15 +134,15 @@ class LinkedInOutreach:
                     close_btn.click()
                     return True
                 else:
-                    print(f"Send button disabled for {connection['name']}")
+                    logger.info(f"Send button disabled for {connection['name']}")
                     return False
 
             except Exception as e:
-                print(f"Error in message box: {e}")
+                logger.info(f"Error in message box: {e}")
                 return False
 
         except Exception as e:
-            print(f"Error clicking message button: {e}")
+            logger.info(f"Error clicking message button: {e}")
             return False
 
     def close(self):

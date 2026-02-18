@@ -1,3 +1,4 @@
+from tools.logger import logger
 import os
 import time
 from selenium import webdriver
@@ -15,8 +16,7 @@ class BrowserManager:
         return cls._instance
 
     def get_driver(self, headless=False, profile_name="default"):
-        """Returns the existing driver or creates a new one.
-        profile_name is accepted for compatibility but ignored (single profile)."""
+        """Returns the existing driver or creates a new one for the specified profile."""
         if self._driver is not None:
             try:
                 # Check if alive
@@ -26,17 +26,17 @@ class BrowserManager:
                 # Driver died, recreate
                 self._driver = None
         
-        return self._init_driver(headless)
+        return self._init_driver(headless, profile_name)
 
-    def _init_driver(self, headless=False):
-        print("Initializing Browser...")
+    def _init_driver(self, headless=False, profile_name="default"):
+        logger.info(f"Initializing Browser for profile: {profile_name}...")
         
         # Paths
         project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        user_data_dir = os.path.join(project_dir, "chrome_data")
+        user_data_dir = os.path.join(project_dir, "chrome_profiles", profile_name)
         
         if not os.path.exists(user_data_dir):
-            os.makedirs(user_data_dir)
+            os.makedirs(user_data_dir, exist_ok=True)
 
         # Options
         options = Options()
@@ -73,10 +73,10 @@ class BrowserManager:
                 pass
             
             self._driver = driver
-            print(f"Browser launched with profile: {user_data_dir}")
+            logger.info(f"Browser launched with profile: {user_data_dir}")
             return driver
         except Exception as e:
-            print(f"Failed to launch browser: {e}")
+            logger.info(f"Failed to launch browser: {e}")
             raise e
 
     def close_driver(self, profile_name=None):

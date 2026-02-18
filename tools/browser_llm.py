@@ -1,3 +1,4 @@
+from tools.logger import logger
 import time
 import random
 from selenium.webdriver.common.by import By
@@ -125,14 +126,14 @@ class BrowserLLM:
                     # Last tab - navigate to about:blank to clear the view but keep process alive
                     self.driver.get("about:blank")
         except Exception as e:
-            print(f"Error closing tab: {e}")
+            logger.info(f"Error closing tab: {e}")
 
     def quit(self):
         """FORCE closes the entire browser associated with this LLM instance."""
         try:
             self.bm.close_driver(profile_name=self.profile_name)
         except Exception as e:
-            print(f"Error quitting browser: {e}")
+            logger.info(f"Error quitting browser: {e}")
 
     def ask(self, prompt, timeout=120):
         """Sends prompt and waits for response."""

@@ -1,3 +1,4 @@
+from tools.logger import logger
 import os
 import re
 import json
@@ -55,7 +56,7 @@ class JobAnalysisCrew:
 
             return {}
         except Exception as e:
-            print(f"DEBUG: JSON CLEAN FAILED: {e}")
+            logger.info(f"DEBUG: JSON CLEAN FAILED: {e}")
             return {}
 
     def run_analysis(self, components=None, use_browser=True):
@@ -63,7 +64,7 @@ class JobAnalysisCrew:
         if components is None:
             components = ['intel', 'cover_letter', 'ats', 'resume']
 
-        print(f"[Analysis] Running browser-based analysis ({self.profile_name}) for: {components}")
+        logger.info(f"[Analysis] Running browser-based analysis ({self.profile_name}) for: {components}")
 
         provider = os.getenv("BROWSER_LLM_PROVIDER", "ChatGPT")
         browser_llm = BrowserLLM(provider=provider, profile_name=self.profile_name)

@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 # Project Imports
 from job_hunter.data_manager import DataManager
+from job_hunter.mission_state import MissionProgress
 from tools.browser_manager import BrowserManager
 
 # View Imports
@@ -36,6 +37,31 @@ def navigate_to(page):
 
 # Sidebar
 with st.sidebar:
+    # --- MISSION STATUS WIDGET ---
+    progress = MissionProgress.load()
+    if progress.is_active:
+        with st.expander(f"🛰️ Active Mission: {progress.mission_type}", expanded=True):
+            st.write(f"**Status:** {progress.status}")
+            cols = st.columns(2)
+            cols[0].metric("Applied", progress.jobs_applied)
+            cols[1].metric("Scouted", progress.jobs_scouted)
+
+            if progress.total_steps > 0:
+                perc = min(progress.current_step / progress.total_steps, 1.0)
+                st.progress(perc, text=f"Progress: {progress.current_step}/{progress.total_steps}")
+
+            if progress.pending_question:
+                st.warning(f"⚠️ Action Required: {progress.pending_question}")
+                if st.button("I've answered it", key="resolve_pending"):
+                    progress.update(pending_question=None)
+                    st.rerun()
+
+            if st.button("🛑 Stop Mission", use_container_width=True):
+                progress.reset()
+                BrowserManager().close_all_drivers()
+                st.rerun()
+        st.markdown("---")
+
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.image("Logo.png", width=120)

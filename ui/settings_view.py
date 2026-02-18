@@ -16,7 +16,7 @@ def render_settings_view(db):
     st.divider()
 
     # Tab layout
-    tab_answers, tab_unknown, tab_add = st.tabs(["📝 My Answers", "❓ Unknown Questions", "➕ Add New"])
+    tab_answers, tab_unknown, tab_add, tab_selectors = st.tabs(["📝 My Answers", "❓ Unknown Questions", "➕ Add New", "🛠️ Advanced Selectors"])
 
     with tab_answers:
         st.subheader("Current Question-Answer Mappings")
@@ -99,3 +99,24 @@ def render_settings_view(db):
                 st.rerun()
             else:
                 st.error("Please enter both question pattern and answer")
+
+    with tab_selectors:
+        st.subheader("🛠️ CSS/XPath Selectors Configuration")
+        st.caption("Customize the selectors used by the bot to interact with job boards. Only modify if you know what you are doing!")
+
+        selectors_dict = db.load_selectors()
+        import yaml
+
+        selectors_yaml = yaml.dump(selectors_dict, default_flow_style=False)
+
+        # YAML Editor
+        new_selectors_yaml = st.text_area("Selectors (YAML Format)", value=selectors_yaml, height=500)
+
+        if st.button("💾 Save Selectors", type="primary"):
+            try:
+                new_selectors_dict = yaml.safe_load(new_selectors_yaml)
+                db.save_selectors(new_selectors_dict)
+                st.success("✅ Selectors updated successfully!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Failed to save selectors: {e}")

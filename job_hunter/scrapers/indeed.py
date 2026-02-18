@@ -1,108 +1,127 @@
 import time
 import urllib.parse
+from typing import List, Optional
 from selenium.webdriver.common.by import By
+from langdetect import detect
+
 from job_hunter.scrapers.base_scraper import BaseScraper
+from job_hunter.models import JobRecord
+from tools.browser_manager import BrowserManager
 
 class IndeedScraper(BaseScraper):
     def __init__(self, profile_name="default"):
-        super().__init__(profile_name=profile_name)
+        self.bm = BrowserManager()
+        self.profile_name = profile_name
+        self.platform_name = "Indeed"
 
-    def search(self, keyword, location, limit=10, easy_apply=False):
+    @property
+    def driver(self):
+        return self.bm.get_driver(headless=False, profile_name=self.profile_name)
+
+    def search(self, keyword: str, location: str, limit: int = 10, easy_apply: bool = False) -> List[JobRecord]:
         results = []
-        # Indeed URL structure
-        # Ferrari: Optimize search for Easy Apply if requested
+        domain = "de.indeed.com"
+        
+        # If easy_apply is on, Indeed can filter by "schnellbewerbung" in the query
+        search_kw = keyword
         if easy_apply:
-            # Using the "schnellbewerbung" filter keyword
-            search_query = f"{keyword} schnellbewerbung"
-            base_url = "https://de.indeed.com/jobs?"
-        else:
-            search_query = keyword
-            base_url = "https://de.indeed.com/jobs?"
+            search_kw += " schnellbewerbung"
 
-        params = {
-            "q": search_query,
-            "l": location,
-            "from": "searchOnHP"
-        }
-        url = base_url + urllib.parse.urlencode(params)
+        base_url = f"https://{domain}/jobs?q={urllib.parse.quote(search_kw)}&l={urllib.parse.quote(location)}"
         
-        print(f"[Indeed] Navigating to: {url}")
-        self.driver.get(url)
-        self.random_sleep(3, 5)
+        self.log(f"Navigating to: {base_url}")
+        self.driver.get(base_url)
+        self.random_sleep(4, 6)
         
-        # Check for Cloudflare/Captcha manually if needed (Selenium usually hits this)
-        # Assuming persistent profile helps bypass some, but Indeed is tough.
-        
-        scrolled = 0
-        while len(results) < limit and scrolled < 5:
-            # Extract Cards
-            # Common classes for Indeed: job_seen_beacon, resultContent
-            cards = self.driver.find_elements(By.CLASS_NAME, "job_seen_beacon")
+        start = 0
+        while len(results) < limit:
+            url = base_url + f"&start={start}"
+            if start > 0:
+                self.driver.get(url)
+                self.random_sleep(3, 5)
+
+            cards = self.driver.find_elements(By.CSS_SELECTOR, "div.job_seen_beacon") or \
+                    self.driver.find_elements(By.CSS_SELECTOR, "td.resultContent")
             
-            print(f"[Indeed] Found {len(cards)} cards on page...")
+            self.log(f"Found {len(cards)} cards on page...")
+            if not cards: break
             
+            found_on_page = 0
             for card in cards:
                 if len(results) >= limit: break
                 try:
-                    title_elem = card.find_element(By.CSS_SELECTOR, "h2.jobTitle span")
-                    company_elem = card.find_element(By.CSS_SELECTOR, "[data-testid='company-name']")
-                    link_elem = card.find_element(By.CSS_SELECTOR, "a.jcs-JobTitle")
+                    title_el = card.find_element(By.CSS_SELECTOR, "h2.jobTitle")
+                    title = title_el.text.strip()
                     
-                    title = title_elem.text.strip()
-                    company = company_elem.text.strip()
-                    link = link_elem.get_attribute("href")
-                    
-                    # Clean link
-                    if "&" in link and "jk=" in link: 
-                         # Try to extract the tracking ID "jk="
-                         # Example: .../viewjob?jk=12345&...
-                         try:
-                             qs = urllib.parse.urlparse(link).query
-                             parsed = urllib.parse.parse_qs(qs)
-                             jk_val = parsed.get("jk", [None])[0]
-                             if jk_val:
-                                 # Reconstruct a clean URL
-                                 link = f"https://de.indeed.com/viewjob?jk={jk_val}"
-                         except:
-                             pass
+                    company_el = card.find_element(By.CSS_SELECTOR, "[data-testid='company-name']")
+                    company = company_el.text.strip()
 
-                    # Check for Easy Apply
+                    link_el = card.find_element(By.TAG_NAME, "a")
+                    href = link_el.get_attribute("href")
+
+                    if href and "jk=" in href:
+                        jk = href.split("jk=")[1].split("&")[0]
+                        link = f"https://{domain}/viewjob?jk={jk}"
+                    else:
+                        link = href
+                    
                     is_easy = False
                     try:
-                        # Easily apply badge (ialbl is common, but also check data-testid)
-                        badge = card.find_element(By.CSS_SELECTOR, ".ialbl, [data-testid='indeedApply'], .jobCardShelfContainer")
-                        badge_text = badge.text.lower()
-                        if any(phrase in badge_text for phrase in ["apply", "bewerben", "schnellbewerbung"]):
-                            is_easy = True
+                        badge = card.find_element(By.CSS_SELECTOR, ".ialbl, [data-testid='indeedApply']")
+                        if badge: is_easy = True
                     except:
-                        # Secondary check for text in the whole card
-                        card_text = card.text.lower()
-                        if any(phrase in card_text for phrase in ["easily apply", "einfach bewerben", "schnellbewerbung"]):
-                            is_easy = True
+                        if "schnellbewerbung" in card.text.lower(): is_easy = True
 
-                    if not any(j['link'] == link for j in results):
-                        results.append({
-                            "title": title,
-                            "company": company,
-                            "location": location,
-                            "link": link,
-                            "platform": "Indeed",
-                            "is_easy_apply": is_easy
-                        })
-                except Exception as e:
+                    if not any(j.link == link for j in results):
+                        job_rec = JobRecord(
+                            title=title,
+                            company=company,
+                            location=location,
+                            link=link,
+                            platform=self.platform_name,
+                            is_easy_apply=is_easy
+                        )
+                        results.append(job_rec)
+                        found_on_page += 1
+                except:
                     continue
             
-            # Pagination / formatting
-            # Indeed pagination is usually a "Next" button at bottom
-            try:
-                next_btn = self.driver.find_element(By.CSS_SELECTOR, "[data-testid='pagination-page-next']")
-                next_btn.click()
-                self.random_sleep(3, 5)
-            except:
-                print("[Indeed] No more pages.")
-                break
-                
-            scrolled += 1
+            if found_on_page == 0: break
+            start += 10
 
-        print(f"[Indeed] Scraped {len(results)} jobs.")
         return results
+
+    def fetch_details(self, job_url: str) -> Optional[dict]:
+        if not job_url: return None
+        self.driver.get(job_url)
+        self.random_sleep(3, 5)
+
+        details = {
+            "description": "",
+            "is_easy_apply": False,
+            "language": "en"
+        }
+
+        # Easy Apply Check
+        try:
+            page_source = self.driver.page_source.lower()
+            if any(phrase in page_source for phrase in ["easily apply", "einfach bewerben", "schnellbewerbung"]):
+                details["is_easy_apply"] = True
+        except: pass
+
+        # Description
+        desc_selectors = ["#jobDescriptionText", "[id*='jobDescription']", ".jobsearch-JobComponent-description"]
+        for selector in desc_selectors:
+            try:
+                el = self.driver.find_element(By.CSS_SELECTOR, selector)
+                if el and len(el.text) > 50:
+                    details["description"] = el.text
+                    break
+            except: continue
+
+        if details["description"]:
+            try:
+                details["language"] = detect(details["description"])
+            except: pass
+
+        return details

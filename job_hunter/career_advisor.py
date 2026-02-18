@@ -1,3 +1,4 @@
+from tools.logger import logger
 import json
 import re
 from tools.browser_llm import BrowserLLM
@@ -24,7 +25,7 @@ RESUME:
             content = browser_llm.ask(prompt)
             browser_llm.close_tab()
 
-            print(f"ADVISOR RAW: {content}")
+            logger.info(f"ADVISOR RAW: {content}")
 
             # 1. Try finding JSON array
             match = re.search(r"\[.*?\]", content, re.DOTALL)
@@ -44,5 +45,5 @@ RESUME:
             
             return ["Data Analyst", "Data Scientist", "Business Analyst"]
         except Exception as e:
-            print(f"Advisor Error: {e}")
+            logger.info(f"Advisor Error: {e}")
             return ["Data Analyst", "Data Scientist", "Business Analyst"]

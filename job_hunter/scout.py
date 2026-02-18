@@ -1,3 +1,4 @@
+from tools.logger import logger
 import time
 import random
 from job_hunter.scrapers.linkedin import LinkedInScraper
@@ -6,7 +7,6 @@ from job_hunter.scrapers.stepstone import StepstoneScraper
 from job_hunter.scrapers.xing import XingScraper
 from job_hunter.scrapers.ziprecruiter import ZipRecruiterScraper
 from job_hunter.data_manager import DataManager
-from job_hunter.content_fetcher import ContentFetcher
 from tools.browser_manager import BrowserManager
 
 class Scout:
@@ -30,7 +30,7 @@ class Scout:
         all_results = []
         
         def log(msg):
-            print(msg)
+            logger.info(msg)
             if status_callback:
                 status_callback(msg)
 
@@ -40,9 +40,16 @@ class Scout:
                 if p_name in self.scrapers:
                     log(f"🔍 Scouting {p_name} for '{keyword}'...")
                     try:
-                        res = self.scrapers[p_name].search(keyword, location, limit, easy_apply=easy_apply)
-                        for job in res:
-                            job["Found_job"] = keyword
+                        # Scrapers now return JobRecord objects
+                        records = self.scrapers[p_name].search(keyword, location, limit, easy_apply=easy_apply)
+
+                        # Convert to dictionaries for legacy compatibility
+                        res = []
+                        for rec in records:
+                            job_dict = rec.to_dict()
+                            job_dict["Found_job"] = keyword
+                            res.append(job_dict)
+
                         all_results.extend(res)
                         log(f"✅ Found {len(res)} jobs on {p_name}")
                     except Exception as e:
@@ -54,18 +61,18 @@ class Scout:
             if deep_scrape and all_results:
                 log(f"🕵️ Deep Scraping {len(all_results)} jobs...")
 
-                # Single fetcher for all jobs to keep it stable
-                fetcher = ContentFetcher(profile_name="default")
-                try:
-                    for i, job in enumerate(all_results):
-                        url = job.get("link")
-                        p_name = job.get("platform") or job.get("Platform") or "Unknown"
-                        title = job.get("title") or job.get("Job Title")
-                        if url:
-                            log(f"  [{i+1}/{len(all_results)}] Fetching {p_name}: {title}")
-                            # Add jitter to stay human
-                            time.sleep(random.uniform(2, 4))
-                            details = fetcher.fetch_details(url, p_name)
+                # Integrated Deep Scrape phase (using unified scraper methods)
+                for i, job in enumerate(all_results):
+                    url = job.get("link")
+                    p_name = job.get("platform")
+                    title = job.get("title")
+
+                    if url and p_name in self.scrapers:
+                        log(f"  [{i+1}/{len(all_results)}] Fetching {p_name}: {title}")
+                        time.sleep(random.uniform(2, 4)) # Jitter
+
+                        try:
+                            details = self.scrapers[p_name].fetch_details(url)
                             if details:
                                 job["rich_description"] = details.get("description", "")
                                 job["language"] = details.get("language", "Unknown")
@@ -73,8 +80,8 @@ class Scout:
                                 if details.get("company") and details.get("company") != job.get("company"):
                                     if "earn up to" not in details.get("company").lower():
                                         job["company"] = details.get("company")
-                finally:
-                    fetcher.close()
+                        except Exception as e:
+                            log(f"  ⚠️ Error fetching details for {title}: {e}")
 
             # Save to DB (Single call ensures deep details are saved)
             log("💾 Saving mission results...")
@@ -85,5 +92,5 @@ class Scout:
             
         finally:
             # Cleanup - Close ALL Browsers (Ferrari: ensures no leaks)
-            print("Mission Complete. Force closing all browsers...")
+            logger.info("Mission Complete. Force closing all browsers...")
             BrowserManager().close_all_drivers()

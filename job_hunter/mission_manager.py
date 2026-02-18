@@ -5,48 +5,57 @@ from datetime import datetime
 from job_hunter.scout import Scout
 from job_hunter.applier import JobApplier
 from job_hunter.analysis_crew import JobAnalysisCrew
+from job_hunter.mission_state import MissionProgress
 from tools.browser_manager import BrowserManager
+from tools.logger import logger
 
 class MissionManager:
     def __init__(self, db):
         self.db = db
+        self.progress = MissionProgress.load()
+
+    def _start_mission(self, mission_type, total_steps=0):
+        self.progress.reset()
+        self.progress.update(
+            mission_type=mission_type,
+            is_active=True,
+            total_steps=total_steps,
+            status="Starting..."
+        )
+
+    def _finish_mission(self, final_status="Complete"):
+        self.progress.update(is_active=False, status=final_status)
 
     def run_live_apply_mission(self, resumes, locations, limit, platforms, status_box):
-        session_total_applied = 0
-        total_skipped = 0
-        total_errors = 0
-        all_unknown = []
-
-        # Only LinkedIn, Xing, Indeed support Live Apply
+        """1. Easy Apply Live: Scout + Apply Now"""
         valid_platforms = [p for p in platforms if p in ["LinkedIn", "Xing", "Indeed"]]
         if not valid_platforms:
-            status_box.error("❌ None of the selected platforms support Easy Apply Live. (LinkedIn, Xing, Indeed only)")
+            status_box.error("❌ None of the selected platforms support Easy Apply Live.")
             return
 
         total_steps = len(resumes) * len(valid_platforms)
-        current_step = 0
+        self._start_mission("Easy Apply Live", total_steps=total_steps)
 
+        current_step = 0
         for role_name, role_data in resumes.items():
             raw_kw = role_data.get("target_keywords", "")
             keywords = [k.strip() for k in raw_kw.split(';') if k.strip()]
             if not keywords: keywords = [role_name]
 
-            # Save keywords to history
             self.db.save_resume_title_history(role_data.get("filename", role_name), keywords)
-
             locs = [l.strip() for l in locations.split(';') if l.strip()]
             if not locs: locs = ["Germany"]
-
             resume_path = role_data.get('file_path')
 
             for p_name in valid_platforms:
                 current_step += 1
-                status_box.info(f"✨ [{current_step}/{total_steps}] Live Applying on **{p_name}**...")
+                self.progress.update(current_step=current_step, status=f"Live Applying on {p_name}...")
 
-                # We do keywords one by one
                 for kw in keywords:
                     for loc in locs:
-                        status_box.info(f"✨ [{current_step}/{total_steps}] Applying for **{kw}** in **{loc}** via **{p_name}**...")
+                        msg = f"✨ Applying for **{kw}** in **{loc}** via **{p_name}**..."
+                        status_box.info(msg)
+                        logger.info(msg)
 
                         applier = JobApplier(resume_path=resume_path, profile_name="default")
                         try:
@@ -58,48 +67,71 @@ class MissionManager:
                                 res = applier.live_apply_indeed(kw, loc, target_count=limit, target_role=role_name, callback=lambda m: status_box.info(f"✨ {m}"))
 
                             applied_here = len(res.get('applied', []))
-                            session_total_applied += applied_here
-                            total_skipped += len(res.get('skipped', []))
-                            total_errors += len(res.get('errors', []))
-                            all_unknown.extend(res.get('unknown_questions', []))
+                            self.progress.update(jobs_applied=self.progress.jobs_applied + applied_here)
 
                         except Exception as e:
-                            status_box.error(f"Error during Live Apply on {p_name}: {e}")
+                            logger.error(f"Error during Live Apply on {p_name}: {e}")
                         finally:
                             applier.close()
 
-        # Cleanup
-        if session_total_applied > 0:
-            removed = self.db.archive_applied_jobs()
-            if removed > 0:
-                st.session_state['scouted_jobs'] = self.db.load_scouted()
+        self.db.archive_applied_jobs()
+        self._finish_mission()
 
-        status_box.success(f"🎉 Live Apply Complete! Total Applied: {session_total_applied} | Skipped: {total_skipped} | Errors: {total_errors}")
+    def run_batch_apply_mission(self, eligible_jobs, resume_path, phone_number, status_box):
+        """2. Easy Apply Batch: Apply to already scouted jobs"""
+        count = len(eligible_jobs)
+        self._start_mission("Easy Apply Batch", total_steps=count)
 
-        if all_unknown:
-            st.session_state['session_unknown_questions'] = all_unknown
+        applier = JobApplier(resume_path=resume_path, phone_number=phone_number)
+
+        for i, job in enumerate(eligible_jobs):
+            self.progress.update(current_step=i+1, status=f"Applying to {job.get('title')}...")
+
+            url = job.get("link") or job.get("Web Address")
+            platform = job.get("platform") or job.get("Platform")
+            title = job.get("title") or job.get("Job Title")
+            company = job.get("company") or job.get("Company")
+
+            status_box.text(f"🚀 [{i+1}/{count}] Applying to {title} @ {company}...")
+
+            try:
+                success, message, is_easy = applier.apply(url, platform, skip_detection=True, job_title=title, company=company)
+                if success:
+                    self.db.save_applied(f"{title}-{company}", job, {"auto_applied": True})
+                    self.progress.update(jobs_applied=self.progress.jobs_applied + 1)
+                elif "expired" in message.lower() or "no longer accepting" in message.lower():
+                    self.db.park_job(title, company, job)
+            except Exception as e:
+                logger.error(f"Batch apply error for {title}: {e}")
+
+            time.sleep(random.uniform(2, 5)) # Human jitter
+
+        applier.close()
+        self.db.archive_applied_jobs()
+        self._finish_mission()
 
     def run_standard_scrape_mission(self, resumes, locations, limit, platforms, deep_scrape, use_browser_analysis, status_box):
+        """3. Launch All Mission: Scout + Deep Scrape + AI Analysis"""
         scout = Scout()
         platforms_arg = platforms if platforms else ["LinkedIn"]
 
-        total = len(resumes)
+        total_steps = len(resumes) * len(platforms_arg)
+        self._start_mission("Scout & Analyze", total_steps=total_steps)
+
         all_scouted_jobs = []
+        current_step = 0
 
-        loc_list = [l.strip() for l in locations.split(';') if l.strip()]
-        if not loc_list: loc_list = ["Germany"]
-
-        for idx, (role_name, role_data) in enumerate(resumes.items()):
+        for role_name, role_data in resumes.items():
             raw_kw = role_data.get("target_keywords", "")
             keywords = [k.strip() for k in raw_kw.split(';') if k.strip()]
             if not keywords: keywords = [role_name]
 
-            # Save keywords to history
             self.db.save_resume_title_history(role_data.get("filename", role_name), keywords)
 
             for kw in keywords:
-                for loc in loc_list:
-                    status_box.info(f"🚀 [{idx+1}/{total}] Scouting & Analyzing for **{kw}** in **{loc}**...")
+                for loc in [l.strip() for l in locations.split(';') if l.strip()] or ["Germany"]:
+                    current_step += 1
+                    self.progress.update(current_step=current_step, status=f"Scouting {kw} in {loc}...")
 
                     try:
                         results = scout.launch_mission(
@@ -109,24 +141,22 @@ class MissionManager:
                              platforms=platforms_arg,
                              easy_apply=False,
                              deep_scrape=deep_scrape,
-                             status_callback=lambda m: status_box.info(f"🚀 [{idx+1}/{total}] {m}")
+                             status_callback=lambda m: status_box.info(f"🚀 {m}")
                         )
-                        # Tag results for auto-analysis
                         for r in results:
                             r['_resume_text'] = role_data.get('text', '')
                             r['_role_name'] = role_name
                         all_scouted_jobs.extend(results)
+                        self.progress.update(jobs_scouted=self.progress.jobs_scouted + len(results))
                     except Exception as e:
-                        st.error(f"Failed for {kw} in {loc}: {e}")
+                        logger.error(f"Scouting failed for {kw}: {e}")
 
-        # --- AUTOMATED AI ANALYSIS ---
         if all_scouted_jobs:
             self.run_automated_analysis(all_scouted_jobs, use_browser_analysis, status_box)
 
-        status_box.success("🎉 All Missions Complete (Scraped & Analyzed)!")
+        self._finish_mission()
 
     def run_automated_analysis(self, jobs, use_browser_analysis, status_box):
-        # Deduplicate by Title-Company
         unique_jobs = {}
         for job in jobs:
             jid = f"{job.get('title')}-{job.get('company')}"
@@ -137,43 +167,29 @@ class MissionManager:
         total_analyze = len(jobs_to_analyze)
 
         status_box.info(f"🧠 Starting Automated AI Analysis for {total_analyze} jobs...")
-        prog_bar = st.progress(0)
 
-        # Load existing cache to avoid re-analyzing
         cache = self.db.load_cache()
         analysis_components = ["intel", "cover_letter", "ats", "resume"]
 
-        # Sequential AI Analysis
         for i, job in enumerate(jobs_to_analyze):
             jid = f"{job.get('title')}-{job.get('company')}"
+            self.progress.update(status=f"Analyzing {job.get('title')}...")
 
-            # Skip if already analyzed
             if jid in cache:
-                status_box.info(f"🧠 [{i+1}/{total_analyze}] Already in cache: **{job.get('title')}**")
-                prog_bar.progress((i + 1) / total_analyze)
                 continue
 
             scraped_jd = job.get('rich_description') or job.get('description') or ""
             if scraped_jd and len(scraped_jd) > 50:
-                context = f"Title: {job.get('title')}\nCompany: {job.get('company')}\nLoc: {job.get('location')}\nLink: {job.get('link','')}\n\nJOB DESCRIPTION:\n{scraped_jd}"
+                context = f"Title: {job.get('title')}\nCompany: {job.get('company')}\nJD: {scraped_jd}"
 
                 try:
                     crew = JobAnalysisCrew(context, job.get('_resume_text', ''), profile_name="default")
-                    # Force use_browser if Gemini API is removed
                     results = crew.run_analysis(components=analysis_components, use_browser=True)
-
                     if results and "error" not in results:
                         self.db.save_cache(jid, results)
-                        if jid not in st.session_state['job_cache']:
-                            st.session_state['job_cache'][jid] = results
                 except Exception as ae:
-                    st.error(f"Analysis failed for {jid}: {ae}")
+                    logger.error(f"Analysis failed for {jid}: {ae}")
 
-            status_box.info(f"🧠 [{i+1}/{total_analyze}] Analysis Complete: **{job.get('title')}**")
-            prog_bar.progress((i + 1) / total_analyze)
-
-            # Small delay between analyses
             time.sleep(random.uniform(2, 4))
 
-        # Clean up
         BrowserManager().close_all_drivers()
