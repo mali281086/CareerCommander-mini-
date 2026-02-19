@@ -13,45 +13,57 @@ def render_home_view(db):
     # --- 1. RESUME MANAGEMENT ---
     st.subheader("📄 Resume Management")
 
-    col_up, col_list = st.columns([1, 1])
+    # Process uploads at the top of the section
+    uploaded_files = st.file_uploader("Upload Resumes (PDF)", type=["pdf"], accept_multiple_files=True, key="resume_uploader")
 
-    with col_up:
-        uploaded_files = st.file_uploader("Upload Resumes (PDF)", type=["pdf"], accept_multiple_files=True)
-        if uploaded_files:
-            if not os.path.exists("data/resumes"):
-                os.makedirs("data/resumes")
+    if uploaded_files:
+        if not os.path.exists("data/resumes"):
+            os.makedirs("data/resumes")
 
-            for uploaded_file in uploaded_files:
-                if uploaded_file.name not in st.session_state['resumes']:
-                    # Save to local resumes folder
-                    save_path = f"data/resumes/{uploaded_file.name}"
-                    with open(save_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
+        new_upload = False
+        # Only show spinner if there are actually new files to process
+        needs_processing = any(f.name not in st.session_state['resumes'] for f in uploaded_files)
 
-                    # Parse text
-                    from job_hunter.resume_parser import parse_resume
-                    text = parse_resume(save_path)
+        if needs_processing:
+            with st.spinner("Processing new resumes..."):
+                for uploaded_file in uploaded_files:
+                    if uploaded_file.name not in st.session_state['resumes']:
+                        # Save to local resumes folder
+                        save_path = f"data/resumes/{uploaded_file.name}"
+                        with open(save_path, "wb") as f:
+                            f.write(uploaded_file.getbuffer())
 
-                    st.session_state['resumes'][uploaded_file.name] = {
-                        "filename": uploaded_file.name,
-                        "file_path": os.path.abspath(save_path),
-                        "text": text,
-                        "pdf_bytes": uploaded_file.getvalue(),
-                        "target_keywords": ""
-                    }
+                        # Parse text
+                        from job_hunter.resume_parser import parse_resume
+                        text = parse_resume(save_path)
+
+                        st.session_state['resumes'][uploaded_file.name] = {
+                            "filename": uploaded_file.name,
+                            "file_path": os.path.abspath(save_path),
+                            "text": text,
+                            "pdf_bytes": uploaded_file.getvalue(),
+                            "target_keywords": ""
+                        }
+                        new_upload = True
+
+                if new_upload:
                     db.save_resume_config(st.session_state['resumes'])
-                    st.success(f"Uploaded {uploaded_file.name}")
-            st.rerun()
+                    st.toast("✅ Resumes processed!")
+                    st.rerun()
 
+    st.divider()
+
+    # --- 2. CONFIGURATION COLUMNS ---
+    col_left, col_right = st.columns([1, 1])
+
+    with col_left:
+        st.markdown("### 🤖 AI Assistance")
         if st.session_state['resumes']:
-            st.markdown("---")
-            if st.button("🤖 Seek AI assistance", use_container_width=True):
-                st.info("💡 It is better to upload all the resumes before seeking suggestions.")
-
+            if st.button("Seek AI Suggested Job Titles", use_container_width=True, help="AI will analyze your resumes to suggest suitable job titles."):
                 from job_hunter.career_advisor import CareerAdvisor
                 advisor = CareerAdvisor()
 
-                with st.spinner("AI is analyzing your resumes to suggest job titles..."):
+                with st.spinner("AI is analyzing your resumes..."):
                     for name, data in st.session_state['resumes'].items():
                         suggestions = advisor.suggest_roles(data.get('text', ''))
                         if suggestions:
@@ -60,67 +72,68 @@ def render_home_view(db):
                     db.save_resume_config(st.session_state['resumes'])
                     st.success("✅ AI suggestions applied!")
                     st.rerun()
+            st.caption("Let AI suggest job titles that fit your background.")
+        else:
+            st.info("Upload a resume to unlock AI suggestions.")
 
-            st.caption("Seek AI Suggested Job Titles that fits your resume.")
-
-    with col_list:
+    with col_right:
+        st.markdown("### 🎯 Target Roles & Keywords")
         if st.session_state['resumes']:
             for name, data in list(st.session_state['resumes'].items()):
-                c1, c2 = st.columns([4, 1])
-                c1.info(f"📋 **{name}**")
-                if c2.button("🗑️", key=f"del_{name}"):
-                    del st.session_state['resumes'][name]
-                    db.save_resume_config(st.session_state['resumes'])
-                    st.rerun()
+                with st.expander(f"📋 {name}", expanded=True):
+                    c1, c2 = st.columns([4, 1])
+                    # Target Keywords for this resume
+                    kw = c1.text_input("Job Titles (separate by ';')",
+                                       value=data.get('target_keywords', ""),
+                                       key=f"kw_{name}",
+                                       placeholder="e.g. Data Scientist; Machine Learning Engineer")
 
-                # Load History for this resume
-                history = db.load_resume_title_history(name)
-
-                # Target Keywords for this resume
-                kw = st.text_input(f"Target Keywords for {name} (separate by ';')",
-                                   value=data.get('target_keywords', ""),
-                                   key=f"kw_{name}",
-                                   placeholder="e.g. Data Scientist; Machine Learning Engineer")
-
-                if history:
-                    st.caption(f"Recent: {', '.join(history[:5])}")
-                    if st.button(f"Load Previous Keywords ({name})", key=f"btn_prev_{name}"):
-                        st.session_state['resumes'][name]['target_keywords'] = "; ".join(history)
+                    if c2.button("🗑️", key=f"del_{name}", help="Remove Resume"):
+                        del st.session_state['resumes'][name]
                         db.save_resume_config(st.session_state['resumes'])
                         st.rerun()
 
-                if kw != data.get('target_keywords'):
-                    st.session_state['resumes'][name]['target_keywords'] = kw
-                    db.save_resume_config(st.session_state['resumes'])
+                    # Load History for this resume
+                    history = db.load_resume_title_history(name)
+                    if history:
+                        st.caption(f"Recent: {', '.join(history[:3])}...")
+                        if st.button(f"🔄 Load History", key=f"btn_prev_{name}", use_container_width=True):
+                            st.session_state['resumes'][name]['target_keywords'] = "; ".join(history)
+                            db.save_resume_config(st.session_state['resumes'])
+                            st.rerun()
+
+                    if kw != data.get('target_keywords'):
+                        st.session_state['resumes'][name]['target_keywords'] = kw
+                        db.save_resume_config(st.session_state['resumes'])
         else:
-            st.info("No resumes uploaded yet.")
+            st.info("No resumes configured. Upload a PDF to start.")
 
     st.divider()
 
-    # --- 2. MISSION SETUP ---
+    # --- 3. MISSION SETUP ---
     st.subheader("🛰️ Mission Setup")
 
-    col1, col2 = st.columns(2)
-    with col1:
+    m_col1, m_col2 = st.columns(2)
+    with m_col1:
         scrape_location = st.text_input("Target Locations (separate by ';')", value="Germany; Remote", help="e.g. Berlin; London; Remote")
         scrape_limit = st.slider("Max jobs per keyword per platform", 5, 50, 15)
         selected_platforms = st.multiselect("Target Platforms", ["LinkedIn", "Indeed", "Xing", "Stepstone", "ZipRecruiter"], default=["LinkedIn", "Indeed", "Xing"])
 
-    with col2:
+    with m_col2:
         mode = st.radio("🚀 Execution Mode:", ["✨ Easy Apply Live (Scout + Apply Now)", "🔍 Deep Scrape (Scout + Detailed JD + AI Analysis)"], index=1)
 
         st.markdown("---")
         # Global AI Analysis Toggle
-        use_browser_analysis = st.toggle("🌐 Use Browser-based AI Analysis (ChatGPT/Gemini)", value=True, help="If OFF, will try to use Gemini API (Redundant if you want to save API costs).")
+        use_browser_analysis = st.toggle("🌐 Use Browser-based AI Analysis (ChatGPT/Gemini)", value=True)
 
         if mode.startswith("🔍"):
-            deep_scrape_toggle = st.checkbox("Fetch Complete Details (integrated)", value=True, help="Slows down scouting but gathers full JD for AI Analysis immediately.")
+            deep_scrape_toggle = st.checkbox("Fetch Complete Details (integrated)", value=True)
         else:
             deep_scrape_toggle = False
 
     st.divider()
 
-    # --- 3. LAUNCH ---
+    # --- 4. LAUNCH ---
     col_launch, col_skip = st.columns([2, 1])
 
     with col_launch:
@@ -130,7 +143,6 @@ def render_home_view(db):
 
             with st.status("🚀 Launching Missions...", expanded=True) as status_box:
                 if mode.startswith("✨"):
-                    # LIVE APPLY MODE
                     mm.run_live_apply_mission(
                         resumes=st.session_state['resumes'],
                         locations=scrape_location,
@@ -139,7 +151,6 @@ def render_home_view(db):
                         status_box=status_box
                     )
                 else:
-                    # STANDARD SCRAPE MODE
                     mm.run_standard_scrape_mission(
                         resumes=st.session_state['resumes'],
                         locations=scrape_location,
@@ -156,7 +167,7 @@ def render_home_view(db):
             st.rerun()
 
     with col_skip:
-         if st.button("📂 Load Existing Jobs (Skip Scrape)", use_container_width=True):
+         if st.button("📂 View Existing Results", use_container_width=True):
              st.cache_data.clear()
              st.session_state['page'] = 'explorer'
              st.rerun()
