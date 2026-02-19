@@ -135,21 +135,21 @@ def render_explorer_view(db):
             # Action buttons
             with c5:
                 act_cols = st.columns(4)
-                if act_cols[0].button("📝", key=f"intel_{idx}", help="Analyze"):
+                if act_cols[0].button("📝", key=f"intel_{job_id}_{idx}", help="Analyze"):
                     st.session_state['selected_job_for_analysis'] = row.to_dict()
                     st.session_state['show_analysis_panel'] = True
 
-                if act_cols[1].button("✅", key=f"mark_{idx}", help="Mark as Applied"):
+                if act_cols[1].button("✅", key=f"mark_{job_id}_{idx}", help="Mark as Applied"):
                     st.session_state['applied_jobs'] = db.save_applied(job_id, row.to_dict(), status="applied")
                     db.archive_applied_jobs()
                     st.toast(f"Marked {row['Job Title']} as Applied!")
                     st.rerun()
 
-                if act_cols[2].button("🅿️", key=f"park_{idx}", help="Park (Hide)"):
+                if act_cols[2].button("🅿️", key=f"park_{job_id}_{idx}", help="Park (Hide)"):
                     db.park_job(row['Job Title'], row['Company'], row.to_dict())
                     st.rerun()
 
-                if act_cols[3].button("🗑️", key=f"del_{idx}", help="Delete"):
+                if act_cols[3].button("🗑️", key=f"del_{job_id}_{idx}", help="Delete"):
                     db.delete_scouted_job(row['Job Title'], row['Company'])
                     st.rerun()
 

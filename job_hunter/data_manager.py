@@ -77,9 +77,6 @@ class DataManager:
             # Also support Title-Company matching from parked entries
             if p.get('title') and p.get('company'):
                 parked_ids.add(f"{p['title']}-{p['company']}")
-        # ----------------------------------
-
-        # ----------------------------------
 
         # --- LOAD BLACKLIST & SAFE WORDS ---
         blacklist = self.load_blacklist()

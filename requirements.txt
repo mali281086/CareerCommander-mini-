@@ -11,3 +11,4 @@ selenium-stealth
 
 # AI & Languages
 langdetect
+PyYAML

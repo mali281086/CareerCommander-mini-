@@ -67,14 +67,17 @@ def render_home_view(db):
                     for name, data in st.session_state['resumes'].items():
                         suggestions = advisor.suggest_roles(data.get('text', ''))
                         if suggestions:
-                            st.session_state['resumes'][name]['target_keywords'] = "; ".join(suggestions)
+                            kw_str = "; ".join(suggestions)
+                            st.session_state['resumes'][name]['target_keywords'] = kw_str
+                            # Also update the widget's state if it exists to ensure UI reflects change
+                            st.session_state[f"kw_{name}"] = kw_str
 
                     db.save_resume_config(st.session_state['resumes'])
                     st.success("✅ AI suggestions applied!")
                     st.rerun()
             st.caption("Let AI suggest job titles that fit your background.")
         else:
-            st.info("Upload a resume to unlock AI suggestions.")
+            st.info("It is better to upload all the resumes before seeking suggestions.")
 
     with col_right:
         st.markdown("### 🎯 Target Roles & Keywords")
@@ -98,7 +101,10 @@ def render_home_view(db):
                     if history:
                         st.caption(f"Recent: {', '.join(history[:3])}...")
                         if st.button(f"🔄 Load History", key=f"btn_prev_{name}", use_container_width=True):
-                            st.session_state['resumes'][name]['target_keywords'] = "; ".join(history)
+                            kw_str = "; ".join(history)
+                            st.session_state['resumes'][name]['target_keywords'] = kw_str
+                            # Also update the widget's state
+                            st.session_state[f"kw_{name}"] = kw_str
                             db.save_resume_config(st.session_state['resumes'])
                             st.rerun()
 
