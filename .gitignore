@@ -24,3 +24,4 @@ debug_xing.py
 # OS
 .DS_Store
 Thumbs.db
+/chrome_profiles
