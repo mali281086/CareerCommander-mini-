@@ -83,7 +83,9 @@ with st.sidebar:
             urls = [
                 "https://www.linkedin.com/login",
                 "https://login.xing.com/",
-                "https://secure.indeed.com/account/login"
+                "https://secure.indeed.com/account/login",
+                "https://www.stepstone.de/candidate/login",
+                "https://www.ziprecruiter.com/login"
             ]
             driver.get(urls[0])
             for url in urls[1:]:
