@@ -4,6 +4,19 @@ import re
 from tools.browser_llm import BrowserLLM
 
 class CareerAdvisor:
+    def __init__(self):
+        self._browser_llm = None
+
+    def _get_llm(self):
+        if self._browser_llm is None:
+            self._browser_llm = BrowserLLM(provider="ChatGPT")
+        return self._browser_llm
+
+    def close(self):
+        if self._browser_llm:
+            self._browser_llm.close_tab()
+            self._browser_llm = None
+
     def _clean_json_array(self, text: str) -> list[str]:
         """Extracts a JSON array of strings from LLM output."""
         if not text or not isinstance(text, str):
@@ -56,8 +69,8 @@ class CareerAdvisor:
             return []
 
         try:
-            # Use BrowserLLM to avoid API costs
-            browser_llm = BrowserLLM(provider="ChatGPT")
+            # Reusing the browser instance significantly speeds up batch processing
+            llm = self._get_llm()
 
             prompt = f"""
 SYSTEM: You are a strict Career Advisor. You ONLY analyze resumes and suggest job titles.
@@ -69,8 +82,7 @@ RESUME:
 
 OUTPUT ONLY THE JSON ARRAY.
 """
-            content = browser_llm.ask(prompt)
-            browser_llm.close_tab()
+            content = llm.ask(prompt)
 
             logger.info(f"ADVISOR RAW RESPONSE: {content}")
 

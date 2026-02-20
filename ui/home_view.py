@@ -61,6 +61,7 @@ def render_home_view(db):
         if st.session_state['resumes']:
             if st.button("Seek AI Suggested Job Titles", use_container_width=True, help="AI will analyze your resumes to suggest suitable job titles."):
                 from job_hunter.career_advisor import CareerAdvisor
+                # Optimized: Instantiate once to reuse the browser session
                 advisor = CareerAdvisor()
 
                 with st.spinner("AI is analyzing your resumes..."):
@@ -72,6 +73,7 @@ def render_home_view(db):
                             # Also update the widget's state if it exists to ensure UI reflects change
                             st.session_state[f"kw_{name}"] = kw_str
 
+                    advisor.close()
                     db.save_resume_config(st.session_state['resumes'])
                     st.success("✅ AI suggestions applied!")
                     st.rerun()
