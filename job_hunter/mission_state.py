@@ -1,7 +1,7 @@
 import json
 import os
 from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from datetime import datetime
 
 STATE_FILE = "data/mission_state.json"

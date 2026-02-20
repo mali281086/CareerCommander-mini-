@@ -23,7 +23,7 @@ Upload Resume(s)  →  Set Target Roles & Keywords  →  Launch Missions
                                    Applies immediately              Saves to "Scouted"
                                               │                             │
                                               ↓                             ↓
-                                       Applied Jobs              AI Analysis (CrewAI)
+                                       Applied Jobs              AI Analysis (Browser-based)
                                                                    ↓       ↓       ↓
                                                                Intel  Cover  ATS Match
                                                               Letter  Resume  Score
@@ -101,7 +101,7 @@ Upload Resume(s)  →  Set Target Roles & Keywords  →  Launch Missions
 ### Scout (`job_hunter/scout.py`)
 - Orchestrates multi-platform job searching
 - Calls individual scrapers sequentially
-- Optional **Deep Scrape** — fetches full JD + language detection via `ContentFetcher`
+- Optional **Deep Scrape** — fetches full JD + language detection via integrated scraper methods
 - Filters out already-applied, parked, and blacklisted jobs automatically
 - Saves results to `scouted_jobs.json`
 
@@ -117,11 +117,11 @@ Upload Resume(s)  →  Set Target Roles & Keywords  →  Launch Missions
 - **Unknown Question Logging:** captures unanswered fields for later configuration
 
 ### AI Analysis (`job_hunter/analysis_crew.py`)
-- **Powered by Google Gemini** (via LangChain / CrewAI)
-- **Multi-Agent Crew:**
-  - 🕵️ Company Intel Agent — researches the company
-  - 📝 Cover Letter Agent — generates humanized cover letter
-  - 🎯 ATS Agent — scores resume vs JD match
+- **Powered by Browser-based LLM** (ChatGPT/Gemini/Copilot via Selenium)
+- **Unified Analysis:**
+  - 🕵️ Company Intel — researches the company
+  - 📝 Cover Letter — generates humanized cover letter
+  - 🎯 ATS Match — scores resume vs JD match
   - 📄 Resume Strategist — tailors experience bullets
 
 ### Data Manager (`job_hunter/data_manager.py`)
@@ -218,12 +218,10 @@ CareerCommander(Mini)/
 ├── job_hunter/               # Core engine
 │   ├── scout.py              # Multi-platform job search orchestrator
 │   ├── applier.py            # Auto-apply engine (LinkedIn, Xing, Indeed)
-│   ├── content_fetcher.py    # Deep scrape / full JD fetcher
-│   ├── analysis_crew.py      # CrewAI multi-agent AI analysis
+│   ├── analysis_crew.py      # Browser-based AI analysis
 │   ├── career_auditor.py     # Career audit report generator
 │   ├── career_advisor.py     # AI career advisor
 │   ├── data_manager.py       # JSON data persistence layer
-│   ├── model_factory.py      # LLM initialization (Gemini)
 │   ├── resume_parser.py      # PDF resume text extraction
 │   └── scrapers/             # Platform-specific scrapers
 │       ├── base_scraper.py

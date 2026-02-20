@@ -1,10 +1,6 @@
 import streamlit as st
 import time
-import random
 import os
-from datetime import datetime
-from job_hunter.analysis_crew import JobAnalysisCrew
-from tools.browser_manager import BrowserManager
 
 def render_home_view(db):
     st.title("🚀 CareerCommander (Mini)")

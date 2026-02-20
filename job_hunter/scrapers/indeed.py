@@ -1,4 +1,3 @@
-import time
 import urllib.parse
 from typing import List, Optional
 from selenium.webdriver.common.by import By
