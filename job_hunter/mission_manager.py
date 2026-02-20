@@ -35,6 +35,7 @@ class MissionManager:
 
         total_steps = len(resumes) * len(valid_platforms)
         self._start_mission("Easy Apply Live", total_steps=total_steps)
+        p_bar = status_box.progress(0, text="🚀 Live Apply Mission Progress")
 
         current_step = 0
         for role_name, role_data in resumes.items():
@@ -49,6 +50,8 @@ class MissionManager:
 
             for p_name in valid_platforms:
                 current_step += 1
+                perc = min(current_step / total_steps, 1.0)
+                p_bar.progress(perc, text=f"🚀 Applying on {p_name} ({current_step}/{total_steps})")
                 self.progress.update(current_step=current_step, status=f"Live Applying on {p_name}...")
 
                 for kw in keywords:
@@ -81,11 +84,15 @@ class MissionManager:
         """2. Easy Apply Batch: Apply to already scouted jobs"""
         count = len(eligible_jobs)
         self._start_mission("Easy Apply Batch", total_steps=count)
+        p_bar = status_box.progress(0, text="🤖 Batch Apply Progress")
 
         applier = JobApplier(resume_path=resume_path, phone_number=phone_number)
 
         for i, job in enumerate(eligible_jobs):
-            self.progress.update(current_step=i+1, status=f"Applying to {job.get('title')}...")
+            curr = i + 1
+            perc = min(curr / count, 1.0)
+            p_bar.progress(perc, text=f"🤖 Applying to job {curr} of {count}")
+            self.progress.update(current_step=curr, status=f"Applying to {job.get('title')}...")
 
             url = job.get("link") or job.get("Web Address")
             platform = job.get("platform") or job.get("Platform")
@@ -116,7 +123,9 @@ class MissionManager:
         platforms_arg = platforms if platforms else ["LinkedIn"]
 
         total_steps = len(resumes) * len(platforms_arg)
+        # We'll use 50% for scouting and 50% for analysis if analysis is enabled
         self._start_mission("Scout & Analyze", total_steps=total_steps)
+        p_bar = status_box.progress(0, text="🛰️ Mission Progress: Scouting...")
 
         all_scouted_jobs = []
         current_step = 0
@@ -131,6 +140,10 @@ class MissionManager:
             for kw in keywords:
                 for loc in [l.strip() for l in locations.split(';') if l.strip()] or ["Germany"]:
                     current_step += 1
+                    # Progress for scouting phase (0-50%)
+                    perc = min((current_step / total_steps) * 0.5, 0.5) if use_browser_analysis else min(current_step / total_steps, 1.0)
+                    p_bar.progress(perc, text=f"🛰️ Scouting {kw} ({current_step}/{total_steps})")
+
                     self.progress.update(current_step=current_step, status=f"Scouting {kw} in {loc}...")
 
                     try:
@@ -151,12 +164,14 @@ class MissionManager:
                     except Exception as e:
                         logger.error(f"Scouting failed for {kw}: {e}")
 
-        if all_scouted_jobs:
-            self.run_automated_analysis(all_scouted_jobs, use_browser_analysis, status_box)
+        if all_scouted_jobs and use_browser_analysis:
+            self.run_automated_analysis(all_scouted_jobs, status_box, p_bar)
+        else:
+            p_bar.progress(1.0, text="🛰️ Scouting Complete!")
 
         self._finish_mission()
 
-    def run_automated_analysis(self, jobs, use_browser_analysis, status_box):
+    def run_automated_analysis(self, jobs, status_box, p_bar=None):
         unique_jobs = {}
         for job in jobs:
             jid = f"{job.get('title')}-{job.get('company')}"
@@ -167,12 +182,19 @@ class MissionManager:
         total_analyze = len(jobs_to_analyze)
 
         status_box.info(f"🧠 Starting Automated AI Analysis for {total_analyze} jobs...")
+        if p_bar is None:
+            p_bar = status_box.progress(0.5, text="🧠 AI Analysis Progress")
 
         cache = self.db.load_cache()
         analysis_components = ["intel", "cover_letter", "ats", "resume"]
 
         for i, job in enumerate(jobs_to_analyze):
             jid = f"{job.get('title')}-{job.get('company')}"
+            curr = i + 1
+            # Progress for analysis phase (50-100%)
+            perc = 0.5 + min((curr / total_analyze) * 0.5, 0.5)
+            p_bar.progress(perc, text=f"🧠 Analyzing {job.get('title')} ({curr}/{total_analyze})")
+
             self.progress.update(status=f"Analyzing {job.get('title')}...")
 
             if jid in cache:
