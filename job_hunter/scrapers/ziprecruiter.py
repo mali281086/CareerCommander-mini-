@@ -1,10 +1,8 @@
-from tools.logger import logger
 import urllib.parse
 from selenium.webdriver.common.by import By
 from job_hunter.scrapers.base_scraper import BaseScraper
 from job_hunter.models import JobRecord
 from tools.browser_manager import BrowserManager
-import time
 from typing import List, Optional
 
 class ZipRecruiterScraper(BaseScraper):

@@ -394,14 +394,6 @@ class DataManager:
             json.dump(clean_config, f, indent=2, ensure_ascii=False)
 
     # --- CAREER AUDIT PERSISTENCE ---
-    def load_audit_report(self):
-        try:
-            if os.path.exists(AUDIT_FILE):
-                with open(AUDIT_FILE, "r", encoding="utf-8") as f:
-                    return f.read()
-            return ""
-        except: return ""
-
     def save_audit_report(self, markdown_text):
         # "Logbook" Mode: Prepend new report to existing history
         existing = ""
@@ -562,18 +554,6 @@ class DataManager:
         
         return best_match
     
-    def save_qa_answer(self, question_text, answer):
-        """Save a question-answer pair to the bot config.
-        
-        This is called when the user manually fills in a field and the bot captures the answer.
-        The question is normalized (lowercase) for matching.
-        """
-        config = self.load_bot_config()
-        q_lower = question_text.lower().strip()
-        config["answers"][q_lower] = answer
-        self.save_bot_config(config)
-        return True
-    
     # ==========================================
     # RESUME TITLE HISTORY
     # ==========================================
@@ -653,15 +633,3 @@ class DataManager:
         with open(filepath, "w", encoding="utf-8") as f:
             yaml.dump(config_dict, f, default_flow_style=False)
 
-    def save_browser_config(self, user_data_dir, profile_name):
-        from dotenv import set_key
-        env_file = ".env"
-        if not os.path.exists(env_file):
-            with open(env_file, "w") as f: f.write("")
-
-        set_key(env_file, "SYSTEM_CHROME_USER_DATA", user_data_dir)
-        set_key(env_file, "SYSTEM_CHROME_PROFILE", profile_name)
-
-        os.environ["SYSTEM_CHROME_USER_DATA"] = user_data_dir
-        os.environ["SYSTEM_CHROME_PROFILE"] = profile_name
-        return True

@@ -1,11 +1,8 @@
 import streamlit as st
 import pandas as pd
-import time
 import base64
-from datetime import datetime
 from ui.metrics import render_metrics_dashboard
 from job_hunter.analysis_crew import JobAnalysisCrew
-from tools.browser_manager import BrowserManager
 
 def render_explorer_view(db):
     st.title("🔎 Mission Results")
@@ -316,7 +313,8 @@ def render_easy_apply_confirm(eligible_jobs, db):
         mm = MissionManager(db)
 
         status_box = st.empty()
-        jobs_list = eligible_jobs.to_dict('records')
+        # Fill NaN values to avoid crashes in mission manager
+        jobs_list = eligible_jobs.fillna("").to_dict('records')
 
         with st.spinner("Executing Batch Apply..."):
             mm.run_batch_apply_mission(

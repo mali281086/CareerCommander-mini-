@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 from datetime import datetime
 
 @dataclass
@@ -32,25 +32,3 @@ class JobRecord:
             "scraped_at": self.scraped_at,
             **self.metadata
         }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'JobRecord':
-        """Creates a JobRecord from a dictionary."""
-        # Extract known fields
-        known_fields = {
-            "title": data.get("title") or data.get("Job Title", "Unknown"),
-            "company": data.get("company") or data.get("Company", "Unknown"),
-            "location": data.get("location") or data.get("Location", "Unknown"),
-            "link": data.get("link") or data.get("Web Address", ""),
-            "platform": data.get("platform") or data.get("Platform", "Unknown"),
-            "is_easy_apply": data.get("is_easy_apply") or data.get("Easy Apply", False),
-            "language": data.get("language") or data.get("Language", "en"),
-            "description": data.get("description") or data.get("Job Description", ""),
-            "rich_description": data.get("rich_description", ""),
-            "scraped_at": data.get("scraped_at") or datetime.now().isoformat()
-        }
-
-        # Remaining data goes into metadata
-        metadata = {k: v for k, v in data.items() if k not in known_fields and k not in ["Job Title", "Company", "Location", "Web Address", "Platform", "Easy Apply", "Language", "Job Description"]}
-
-        return cls(**known_fields, metadata=metadata)

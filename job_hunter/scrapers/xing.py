@@ -1,4 +1,3 @@
-import time
 from typing import List, Optional
 from selenium.webdriver.common.by import By
 from langdetect import detect
@@ -30,7 +29,7 @@ class XingScraper(BaseScraper):
 
         processed_links = set()
         page = 1
-        
+
         while len(results) < limit and page < 5:
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             self.random_sleep(2, 3)
@@ -39,7 +38,7 @@ class XingScraper(BaseScraper):
                     self.driver.find_elements(By.CSS_SELECTOR, ".job-posting-card")
             
             self.log(f"Found {len(cards)} cards on page {page}...")
-            
+
             for card in cards:
                 if len(results) >= limit: break
                 try:

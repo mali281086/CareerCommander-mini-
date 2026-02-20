@@ -1,6 +1,5 @@
 from tools.logger import logger
 import os
-import time
 import undetected_chromedriver as uc
 from selenium import webdriver
 

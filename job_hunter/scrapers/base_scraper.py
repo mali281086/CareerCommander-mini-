@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from job_hunter.models import JobRecord
 from tools.logger import logger
 from job_hunter.data_manager import DataManager

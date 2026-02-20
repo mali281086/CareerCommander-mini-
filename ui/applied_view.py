@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import json
 from ui.metrics import render_metrics_dashboard
 
 def render_applied_view(db):

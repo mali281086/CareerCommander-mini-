@@ -61,17 +61,6 @@ class JobApplier:
         "closed"
     ]
 
-    # CSS selectors for the LinkedIn Easy Apply modal dialog
-    MODAL_SELECTORS = [
-        ".jobs-easy-apply-modal",
-        ".artdeco-modal",
-        "div[role='dialog']",
-        ".artdeco-modal-overlay .artdeco-modal",
-        ".jobs-easy-apply-content",
-        ".jpac-modal",
-    ]
-    MODAL_CSS = ", ".join(MODAL_SELECTORS)
-
     def __init__(self, resume_path=None, phone_number=None, profile_name="default"):
         self.bm = BrowserManager()
         self.profile_name = profile_name
@@ -452,6 +441,9 @@ class JobApplier:
         Automates LinkedIn Easy Apply.
         Returns: (success: bool, message: str, is_easy_apply: bool)
         """
+        if not job_url or not isinstance(job_url, str):
+            return False, "Invalid Job URL.", False
+
         if self.applied_count >= self.max_applications:
             return False, "Max applications reached for this session.", False
         
@@ -921,7 +913,7 @@ class JobApplier:
                                         logger.info(f"[LinkedIn] ✅ Captured answer: '{user_answer}'")
                                         
                                         # Save to Q&A config automatically
-                                        self.db.save_qa_answer(label_text, user_answer)
+                                        self.db.add_answer(label_text, user_answer)
                                         logger.info(f"[LinkedIn] 💾 Saved Q&A: '{label_text}' → '{user_answer}'")
 
                                         # Clear pending question in state
@@ -1178,6 +1170,9 @@ class JobApplier:
         Automates Xing Apply.
         Returns: (success: bool, message: str, is_easy_apply: bool)
         """
+        if not job_url or not isinstance(job_url, str):
+            return False, "Invalid Job URL.", False
+
         if self.applied_count >= self.max_applications:
             return False, "Max applications reached for this session.", False
         
@@ -1313,6 +1308,9 @@ class JobApplier:
 
     def apply_indeed(self, job_url, skip_detection=False):
         """Automates Indeed Schnellbewerbung."""
+        if not job_url or not isinstance(job_url, str):
+            return False, "Invalid Job URL.", False
+
         if self.applied_count >= self.max_applications:
             return False, "Max applications reached.", False
 

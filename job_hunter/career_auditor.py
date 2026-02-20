@@ -1,5 +1,3 @@
-import json
-import os
 from datetime import datetime
 from tools.browser_llm import BrowserLLM
 from .data_manager import DataManager

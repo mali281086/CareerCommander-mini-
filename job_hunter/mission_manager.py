@@ -88,18 +88,30 @@ class MissionManager:
 
         applier = JobApplier(resume_path=resume_path, phone_number=phone_number)
 
+        def get_valid_val(j, *keys):
+            for k in keys:
+                v = j.get(k)
+                # Check for NaN or None or empty
+                if v == v and v is not None and str(v).strip() != "" and str(v).lower() != "nan":
+                    return v
+            return None
+
         for i, job in enumerate(eligible_jobs):
             curr = i + 1
             perc = min(curr / count, 1.0)
             p_bar.progress(perc, text=f"🤖 Applying to job {curr} of {count}")
-            self.progress.update(current_step=curr, status=f"Applying to {job.get('title')}...")
 
-            url = job.get("link") or job.get("Web Address")
-            platform = job.get("platform") or job.get("Platform")
-            title = job.get("title") or job.get("Job Title")
-            company = job.get("company") or job.get("Company")
+            url = get_valid_val(job, "link", "Web Address")
+            platform = get_valid_val(job, "platform", "Platform")
+            title = get_valid_val(job, "title", "Job Title") or "Unknown Title"
+            company = get_valid_val(job, "company", "Company") or "Unknown Company"
 
+            self.progress.update(current_step=curr, status=f"Applying to {title}...")
             status_box.text(f"🚀 [{i+1}/{count}] Applying to {title} @ {company}...")
+
+            if not url or not platform:
+                logger.warning(f"Skipping job {title} due to missing URL or Platform.")
+                continue
 
             try:
                 success, message, is_easy = applier.apply(url, platform, skip_detection=True, job_title=title, company=company)
