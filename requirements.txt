@@ -8,6 +8,8 @@ pdfplumber
 selenium
 webdriver-manager
 selenium-stealth
+undetected-chromedriver
+setuptools
 
 # AI & Languages
 langdetect

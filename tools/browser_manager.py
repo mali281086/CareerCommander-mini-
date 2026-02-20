@@ -1,10 +1,8 @@
 from tools.logger import logger
 import os
 import time
+import undetected_chromedriver as uc
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-# from webdriver_manager.chrome import ChromeDriverManager # Removed in favor of Selenium Manager
 
 class BrowserManager:
     _instance = None
@@ -29,7 +27,7 @@ class BrowserManager:
         return self._init_driver(headless, profile_name)
 
     def _init_driver(self, headless=False, profile_name="default"):
-        logger.info(f"Initializing Browser for profile: {profile_name}...")
+        logger.info(f"Initializing Undetected Browser for profile: {profile_name}...")
         
         # Paths
         project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -39,25 +37,22 @@ class BrowserManager:
             os.makedirs(user_data_dir, exist_ok=True)
 
         # Options
-        options = Options()
-        options.add_argument(f"user-data-dir={user_data_dir}")
+        options = uc.ChromeOptions()
+        # Note: undetected_chromedriver handles user-data-dir differently if passed in constructor
         options.add_argument("--start-maximized")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        
-        # Exclude automation switches
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
         
         if headless:
-            options.add_argument("--headless=new")
+            options.add_argument("--headless")
 
-        # Service
         try:
-            # Use Selenium Manager (Selenium 4.10+) automatically
-            # service = Service(ChromeDriverManager().install()) 
-            driver = webdriver.Chrome(options=options)
+            # undetected_chromedriver automatically bypasses most bot detection
+            driver = uc.Chrome(
+                options=options,
+                user_data_dir=user_data_dir,
+                headless=headless
+            )
             
-            # Apply stealth to hide Selenium fingerprint
+            # Optional: Apply stealth as well for extra protection
             try:
                 from selenium_stealth import stealth
                 stealth(driver,
@@ -69,15 +64,26 @@ class BrowserManager:
                     fix_hairline=True,
                 )
             except ImportError:
-                # selenium_stealth not installed, still works without it
                 pass
             
             self._driver = driver
-            logger.info(f"Browser launched with profile: {user_data_dir}")
+            logger.info(f"Undetected Browser launched with profile: {user_data_dir}")
             return driver
         except Exception as e:
-            logger.info(f"Failed to launch browser: {e}")
-            raise e
+            logger.error(f"Failed to launch undetected browser: {e}")
+            # Fallback to standard if UC fails
+            logger.info("Attempting fallback to standard Chrome...")
+            try:
+                from selenium.webdriver.chrome.options import Options as StdOptions
+                std_options = StdOptions()
+                std_options.add_argument(f"user-data-dir={user_data_dir}")
+                if headless: std_options.add_argument("--headless=new")
+                driver = webdriver.Chrome(options=std_options)
+                self._driver = driver
+                return driver
+            except Exception as e2:
+                logger.error(f"Fallback also failed: {e2}")
+                raise e
 
     def close_driver(self, profile_name=None):
         """Close the browser. profile_name accepted for compatibility."""
