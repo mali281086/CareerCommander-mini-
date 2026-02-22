@@ -118,11 +118,6 @@ def render_home_view(db):
     st.subheader("🛰️ Mission Setup")
 
     m_col1, m_col2 = st.columns(2)
-    with m_col1:
-        scrape_location = st.text_input("Target Locations (separate by ';')", value="Germany; Remote", help="e.g. Berlin; London; Remote")
-        scrape_limit = st.slider("Max jobs per keyword per platform", 5, 50, 15)
-        selected_platforms = st.multiselect("Target Platforms", ["LinkedIn", "Indeed", "Xing", "Stepstone", "ZipRecruiter"], default=["LinkedIn", "Indeed", "Xing"])
-
     with m_col2:
         mode = st.radio("🚀 Execution Mode:", ["✨ Easy Apply Live (Scout + Apply Now)", "🔍 Deep Scrape (Scout + Detailed JD + AI Analysis)"], index=1)
 
@@ -134,6 +129,31 @@ def render_home_view(db):
             deep_scrape_toggle = st.checkbox("Fetch Complete Details (integrated)", value=True)
         else:
             deep_scrape_toggle = False
+
+    with m_col1:
+        scrape_location = st.text_input("Target Locations (separate by ';')", value="Germany; Remote", help="e.g. Berlin; London; Remote")
+        scrape_limit = st.slider("Max jobs per keyword per platform", 5, 50, 15)
+
+        all_platforms = ["LinkedIn", "Indeed", "Xing", "Stepstone", "ZipRecruiter"]
+        is_easy_apply_live = mode.startswith("✨")
+
+        if is_easy_apply_live:
+            available_platforms = ["LinkedIn", "Indeed", "Xing"]
+            st.info("ℹ️ Easy Apply Live is restricted to LinkedIn, Indeed, and Xing.")
+            selected_platforms = st.multiselect(
+                "Target Platforms",
+                available_platforms,
+                default=available_platforms,
+                disabled=True,
+                help="Platform selection is locked in Easy Apply Live mode."
+            )
+        else:
+            available_platforms = all_platforms
+            selected_platforms = st.multiselect(
+                "Target Platforms",
+                available_platforms,
+                default=["LinkedIn", "Indeed", "Xing"]
+            )
 
     st.divider()
 

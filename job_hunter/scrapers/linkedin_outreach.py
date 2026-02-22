@@ -8,6 +8,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from tools.browser_manager import BrowserManager
 from job_hunter.data_manager import DataManager
 import random
+from tools.human_actions import type_human_like, random_wait
 
 class LinkedInOutreach:
     def __init__(self):
@@ -106,36 +107,78 @@ class LinkedInOutreach:
         if not self.driver:
             return False
 
+        full_name = connection['name']
         try:
             msg_btn = connection['element']
             # Scroll to button
             self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", msg_btn)
-            self.random_sleep(1, 2)
-            msg_btn.click()
-            self.random_sleep(2, 4)
+            random_wait(1, 2)
+
+            # Check if message overlay is already open for this person
+            # (LinkedIn often opens them automatically if you recently chatted)
+            try:
+                # Look for an open bubble with this person's name
+                bubbles = self.driver.find_elements(By.CSS_SELECTOR, ".msg-overlay-bubble-header")
+                already_open = False
+                for b in bubbles:
+                    if full_name in b.text:
+                        already_open = True
+                        b.click() # Focus it
+                        break
+
+                if not already_open:
+                    msg_btn.click()
+            except:
+                msg_btn.click()
+
+            random_wait(2, 4)
 
             # Message box - LinkedIn often has multiple message boxes if multiple are open
             # We look for the active one or the last one
             try:
                 # Wait for the message overlay to appear
                 wait = WebDriverWait(self.driver, 5)
-                msg_box = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='textbox'], .msg-form__contenteditable")))
+                # Selectors for the message input area
+                msg_box_selectors = [
+                    "div[role='textbox']",
+                    ".msg-form__contenteditable",
+                    "div[aria-label^='Write a message']",
+                    "div[aria-label^='Nachricht schreiben']"
+                ]
+
+                msg_box = None
+                for sel in msg_box_selectors:
+                    try:
+                        elements = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        if elements:
+                            # Use the last one (usually the most recently opened)
+                            msg_box = elements[-1]
+                            break
+                    except:
+                        continue
+
+                if not msg_box:
+                    logger.error(f"Could not find message box for {full_name}")
+                    return False
 
                 # Personalize (support both {first_name} and {name})
                 first_name = connection['first_name']
-                full_name = connection['name']
                 message = message_template.replace("{first_name}", first_name).replace("{name}", full_name)
 
-                # Clear and Type
+                # Clear
+                msg_box.click()
                 msg_box.send_keys(Keys.CONTROL + "a")
                 msg_box.send_keys(Keys.BACKSPACE)
+                random_wait(0.5, 1)
 
-                # Type message (could be long, so maybe split by lines)
-                for line in message.split('\n'):
-                    msg_box.send_keys(line)
-                    msg_box.send_keys(Keys.SHIFT + Keys.ENTER)
+                # Type message human-like
+                lines = message.split('\n')
+                for i, line in enumerate(lines):
+                    type_human_like(msg_box, line)
+                    if i < len(lines) - 1:
+                        msg_box.send_keys(Keys.SHIFT + Keys.ENTER)
 
-                self.random_sleep(1, 2)
+                random_wait(1, 2)
 
                 # Mark as messaged in our database
                 self.db.save_messaged_contact(full_name, connection.get('profile_url'))

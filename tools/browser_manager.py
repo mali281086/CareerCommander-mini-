@@ -3,7 +3,6 @@ import os
 import json
 import undetected_chromedriver as uc
 from selenium import webdriver
-from tools.logger import logger
 
 class BrowserManager:
     _instance = None
@@ -92,19 +91,43 @@ class BrowserManager:
                 raise e
 
     def save_cookies(self):
-        """Saves current browser cookies to a file."""
+        """Saves current browser cookies to a file for all open tabs/domains."""
         if not self._driver:
             return
 
         try:
-            cookies = self._driver.get_cookies()
+            all_cookies = []
+            original_handle = self._driver.current_window_handle
+            handles = self._driver.window_handles
+
+            for handle in handles:
+                try:
+                    self._driver.switch_to.window(handle)
+                    all_cookies.extend(self._driver.get_cookies())
+                except:
+                    continue
+
+            # Remove duplicates based on name and domain
+            unique_cookies = []
+            seen = set()
+            for c in all_cookies:
+                key = (c.get('name'), c.get('domain'), c.get('path'))
+                if key not in seen:
+                    unique_cookies.append(c)
+                    seen.add(key)
+
+            try:
+                self._driver.switch_to.window(original_handle)
+            except:
+                pass
+
             project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             cookie_path = os.path.join(project_dir, "data", "cookies.json")
 
             os.makedirs(os.path.dirname(cookie_path), exist_ok=True)
             with open(cookie_path, 'w', encoding='utf-8') as f:
-                json.dump(cookies, f, indent=2)
-            logger.info(f"Saved {len(cookies)} cookies to {cookie_path}")
+                json.dump(unique_cookies, f, indent=2)
+            logger.info(f"Saved {len(unique_cookies)} unique cookies to {cookie_path}")
         except Exception as e:
             logger.error(f"Failed to save cookies: {e}")
 
