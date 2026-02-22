@@ -160,10 +160,26 @@ def render_home_view(db):
     st.divider()
 
     # --- 4. LAUNCH ---
+    from job_hunter.mission_state import MissionProgress
+    progress = MissionProgress.load()
+
+    if progress.is_active and (progress.scouting_backlog or progress.analysis_backlog):
+        st.info(f"⏳ An incomplete mission (**{progress.mission_type}**) was found. You can resume it or start a new one.")
+        if st.button("▶️ Resume Previous Mission", type="primary", use_container_width=True):
+            from job_hunter.mission_manager import MissionManager
+            mm = MissionManager(db)
+            with st.status("🚀 Resuming Mission...", expanded=True) as status_box:
+                mm.resume_mission(status_box)
+
+            st.cache_data.clear()
+            st.session_state['page'] = 'explorer'
+            st.rerun()
+        st.divider()
+
     col_launch, col_skip = st.columns([2, 1])
 
     with col_launch:
-        if st.button("🚀 Launch All Missions", type="primary", use_container_width=True, disabled=not st.session_state['resumes']):
+        if st.button("🚀 Launch New Mission", type="primary", use_container_width=True, disabled=not st.session_state['resumes']):
             from job_hunter.mission_manager import MissionManager
             mm = MissionManager(db)
 

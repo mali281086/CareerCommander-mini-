@@ -10,6 +10,7 @@ STATE_FILE = "data/mission_state.json"
 class MissionProgress:
     mission_type: str  # "Live Apply", "Batch Apply", "Scout & Analyze"
     status: str = "Idle"
+    phase: str = "None" # "Scouting", "Analysis", "Applying"
     current_step: int = 0
     total_steps: int = 0
     jobs_applied: int = 0
@@ -18,7 +19,16 @@ class MissionProgress:
     start_time: str = field(default_factory=lambda: datetime.now().isoformat())
     last_update: str = field(default_factory=lambda: datetime.now().isoformat())
     is_active: bool = False
+    is_paused: bool = False
     pending_question: Optional[str] = None
+    pending_decision: Optional[str] = None # For "Skip or Retry" prompts
+
+    # Backlog of work to allow resumption
+    scouting_backlog: List[dict] = field(default_factory=list) # [{kw, loc, platform, role_name, resume_text}]
+    analysis_backlog: List[dict] = field(default_factory=list) # List of scouted job dicts
+
+    # Context for resumption
+    config_context: dict = field(default_factory=dict) # Store scrape_limit, deep_scrape_toggle etc.
 
     def update(self, **kwargs):
         for key, value in kwargs.items():
@@ -45,11 +55,17 @@ class MissionProgress:
 
     def reset(self):
         self.is_active = False
+        self.is_paused = False
         self.status = "Idle"
+        self.phase = "None"
         self.current_step = 0
         self.total_steps = 0
         self.jobs_applied = 0
         self.jobs_scouted = 0
         self.errors = []
         self.pending_question = None
+        self.pending_decision = None
+        self.scouting_backlog = []
+        self.analysis_backlog = []
+        self.config_context = {}
         self.save()

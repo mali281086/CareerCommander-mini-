@@ -40,6 +40,8 @@ with st.sidebar:
     if progress.is_active:
         with st.expander(f"🛰️ Active Mission: {progress.mission_type}", expanded=True):
             st.write(f"**Status:** {progress.status}")
+            st.caption(f"Phase: {progress.phase}")
+
             cols = st.columns(2)
             cols[0].metric("Applied", progress.jobs_applied)
             cols[1].metric("Scouted", progress.jobs_scouted)
@@ -48,16 +50,27 @@ with st.sidebar:
                 perc = min(progress.current_step / progress.total_steps, 1.0)
                 st.progress(perc, text=f"Progress: {progress.current_step}/{progress.total_steps}")
 
+            # Control Buttons
+            c1, c2 = st.columns(2)
+            if progress.is_paused:
+                if c1.button("▶️ Resume", use_container_width=True):
+                    progress.update(is_paused=False, status="Resuming...")
+                    st.rerun()
+            else:
+                if c1.button("⏸️ Pause", use_container_width=True):
+                    progress.update(is_paused=True, status="Paused (Manual)")
+                    st.rerun()
+
+            if c2.button("🛑 Stop", use_container_width=True):
+                progress.reset()
+                BrowserManager().close_all_drivers()
+                st.rerun()
+
             if progress.pending_question:
                 st.warning(f"⚠️ Action Required: {progress.pending_question}")
                 if st.button("I've answered it", key="resolve_pending"):
                     progress.update(pending_question=None)
                     st.rerun()
-
-            if st.button("🛑 Stop Mission", use_container_width=True):
-                progress.reset()
-                BrowserManager().close_all_drivers()
-                st.rerun()
         st.markdown("---")
 
     col1, col2, col3 = st.columns([1, 2, 1])

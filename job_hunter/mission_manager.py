@@ -8,19 +8,21 @@ from job_hunter.analysis_crew import JobAnalysisCrew
 from job_hunter.mission_state import MissionProgress
 from tools.browser_manager import BrowserManager
 from tools.logger import logger
+from tools.internet import wait_for_internet, is_internet_available
 
 class MissionManager:
     def __init__(self, db):
         self.db = db
         self.progress = MissionProgress.load()
 
-    def _start_mission(self, mission_type, total_steps=0):
+    def _start_mission(self, mission_type, total_steps=0, config_context=None):
         self.progress.reset()
         self.progress.update(
             mission_type=mission_type,
             is_active=True,
             total_steps=total_steps,
-            status="Starting..."
+            status="Starting...",
+            config_context=config_context or {}
         )
 
     def _finish_mission(self, final_status="Complete"):
@@ -130,18 +132,11 @@ class MissionManager:
         self._finish_mission()
 
     def run_standard_scrape_mission(self, resumes, locations, limit, platforms, deep_scrape, use_browser_analysis, status_box):
-        """3. Launch All Mission: Scout + Deep Scrape + AI Analysis"""
-        scout = Scout()
+        """3. Launch All Mission: Scout + Deep Scrape + AI Analysis (Resumable)"""
         platforms_arg = platforms if platforms else ["LinkedIn"]
 
-        total_steps = len(resumes) * len(platforms_arg)
-        # We'll use 50% for scouting and 50% for analysis if analysis is enabled
-        self._start_mission("Scout & Analyze", total_steps=total_steps)
-        p_bar = status_box.progress(0, text="🛰️ Mission Progress: Scouting...")
-
-        all_scouted_jobs = []
-        current_step = 0
-
+        # Prepare Backlog
+        backlog = []
         for role_name, role_data in resumes.items():
             raw_kw = role_data.get("target_keywords", "")
             keywords = [k.strip() for k in raw_kw.split(';') if k.strip()]
@@ -151,41 +146,121 @@ class MissionManager:
 
             for kw in keywords:
                 for loc in [l.strip() for l in locations.split(';') if l.strip()] or ["Germany"]:
-                    current_step += 1
-                    # Progress for scouting phase (0-50%)
-                    perc = min((current_step / total_steps) * 0.5, 0.5) if use_browser_analysis else min(current_step / total_steps, 1.0)
-                    p_bar.progress(perc, text=f"🛰️ Scouting {kw} ({current_step}/{total_steps})")
+                    for p in platforms_arg:
+                        backlog.append({
+                            "keyword": kw, "location": loc, "platform": p,
+                            "role_name": role_name, "resume_text": role_data.get('text', ''),
+                            "resume_filename": role_data.get("filename", role_name)
+                        })
 
-                    self.progress.update(current_step=current_step, status=f"Scouting {kw} in {loc}...")
+        total_steps = len(backlog)
+        self._start_mission("Scout & Analyze", total_steps=total_steps, config_context={
+            "limit": limit, "deep_scrape": deep_scrape, "use_browser_analysis": use_browser_analysis
+        })
+        self.progress.update(scouting_backlog=backlog, phase="Scouting")
 
-                    try:
-                        results = scout.launch_mission(
-                             keyword=kw,
-                             location=loc,
-                             limit=limit,
-                             platforms=platforms_arg,
-                             easy_apply=False,
-                             deep_scrape=deep_scrape,
-                             status_callback=lambda m: status_box.info(f"🚀 {m}")
-                        )
-                        for r in results:
-                            r['_resume_text'] = role_data.get('text', '')
-                            r['_role_name'] = role_name
-                        all_scouted_jobs.extend(results)
-                        self.progress.update(jobs_scouted=self.progress.jobs_scouted + len(results))
-                    except Exception as e:
-                        logger.error(f"Scouting failed for {kw}: {e}")
+        self.resume_mission(status_box)
 
-        if all_scouted_jobs and use_browser_analysis:
-            self.run_automated_analysis(all_scouted_jobs, status_box, p_bar)
-        else:
-            p_bar.progress(1.0, text="🛰️ Scouting Complete!")
+    def resume_mission(self, status_box):
+        """Resumes an incomplete mission from the last saved state."""
+        if not self.progress.is_active:
+            status_box.error("No active mission to resume.")
+            return
 
-        self._finish_mission()
+        self.progress.update(is_paused=False, status="Resuming...")
 
-    def run_automated_analysis(self, jobs, status_box, p_bar=None):
+        if self.progress.phase == "Scouting":
+            self._execute_scouting_loop(status_box)
+
+        # After scouting (or if we started in analysis), run analysis
+        if self.progress.is_active and self.progress.phase == "Analysis":
+            self._execute_analysis_loop(status_box)
+
+        if self.progress.is_active and not self.progress.scouting_backlog and not self.progress.analysis_backlog:
+            self._finish_mission()
+
+    def _check_interrupts(self, status_box):
+        """Checks for internet connection and pause state."""
+        # 1. Internet check
+        if not is_internet_available():
+            status_box.warning("📶 Internet disconnected. Pausing mission automatically...")
+            self.progress.update(is_paused=True, status="Paused (No Internet)")
+
+        # 2. Pause check
+        while self.progress.is_paused:
+            status_box.info("⏸️ Mission is paused. Waiting for resume...")
+            time.sleep(5)
+            self.progress = MissionProgress.load() # Reload state
+            if not self.progress.is_active:
+                return False # Stop requested
+
+            # Auto-resume check if internet returns
+            if self.progress.status == "Paused (No Internet)" and is_internet_available():
+                logger.info("Internet restored. Auto-resuming...")
+                self.progress.update(is_paused=False, status="Resuming...")
+                break
+
+        return True
+
+    def _execute_scouting_loop(self, status_box):
+        scout = Scout()
+        total_backlog_start = self.progress.total_steps
+        use_analysis = self.progress.config_context.get("use_browser_analysis", True)
+        limit = self.progress.config_context.get("limit", 15)
+        deep_scrape = self.progress.config_context.get("deep_scrape", True)
+
+        p_bar = status_box.progress(0, text="🛰️ Mission Progress: Scouting...")
+
+        while self.progress.scouting_backlog:
+            if not self._check_interrupts(status_box): return
+
+            item = self.progress.scouting_backlog[0]
+            kw, loc, p_name = item['keyword'], item['location'], item['platform']
+
+            # Calculate progress
+            current_idx = total_backlog_start - len(self.progress.scouting_backlog) + 1
+            self.progress.update(current_step=current_idx, status=f"Scouting {kw} on {p_name}...")
+
+            perc = min((current_idx / total_backlog_start) * 0.5, 0.5) if use_analysis else min(current_idx / total_backlog_start, 1.0)
+            p_bar.progress(perc, text=f"🛰️ Scouting {kw} ({current_idx}/{total_backlog_start})")
+
+            try:
+                results = scout.launch_mission(
+                     keyword=kw,
+                     location=loc,
+                     limit=limit,
+                     platforms=[p_name],
+                     easy_apply=False,
+                     deep_scrape=deep_scrape,
+                     status_callback=lambda m: status_box.info(f"🚀 {m}")
+                )
+                for r in results:
+                    r['_resume_text'] = item.get('resume_text', '')
+                    r['_role_name'] = item.get('role_name', '')
+
+                # Add to analysis backlog
+                if use_analysis:
+                    self.progress.analysis_backlog.extend(results)
+
+                self.progress.update(jobs_scouted=self.progress.jobs_scouted + len(results))
+
+                # Pop from backlog and save
+                self.progress.scouting_backlog.pop(0)
+                self.progress.save()
+
+            except Exception as e:
+                logger.error(f"Scouting failed for {kw} on {p_name}: {e}")
+                # For platform errors, we could ask user via pending_decision but for now let's just log and skip or retry
+                self.progress.update(status=f"Error on {p_name}. Retrying in 30s...")
+                time.sleep(30)
+
+        self.progress.update(phase="Analysis")
+        p_bar.progress(0.5, text="🛰️ Scouting Complete!")
+
+    def _execute_analysis_loop(self, status_box):
+        # Deduplicate backlog
         unique_jobs = {}
-        for job in jobs:
+        for job in self.progress.analysis_backlog:
             jid = f"{job.get('title')}-{job.get('company')}"
             if jid not in unique_jobs:
                 unique_jobs[jid] = job
@@ -193,37 +268,52 @@ class MissionManager:
         jobs_to_analyze = list(unique_jobs.values())
         total_analyze = len(jobs_to_analyze)
 
+        if total_analyze == 0:
+            return
+
         status_box.info(f"🧠 Starting Automated AI Analysis for {total_analyze} jobs...")
-        if p_bar is None:
-            p_bar = status_box.progress(0.5, text="🧠 AI Analysis Progress")
+        p_bar = status_box.progress(0.5, text="🧠 AI Analysis Progress")
 
         cache = self.db.load_cache()
         analysis_components = ["intel", "cover_letter", "ats", "resume"]
 
-        for i, job in enumerate(jobs_to_analyze):
-            jid = f"{job.get('title')}-{job.get('company')}"
-            curr = i + 1
-            # Progress for analysis phase (50-100%)
-            perc = 0.5 + min((curr / total_analyze) * 0.5, 0.5)
-            p_bar.progress(perc, text=f"🧠 Analyzing {job.get('title')} ({curr}/{total_analyze})")
+        while self.progress.analysis_backlog:
+            if not self._check_interrupts(status_box): return
 
+            job = self.progress.analysis_backlog[0]
+            jid = f"{job.get('title')}-{job.get('company')}"
+
+            # Progress calculation
+            # We use a simple count for display
+            done_count = total_analyze - len(unique_jobs) + 1 # This is tricky if backlog has duplicates
+            # Let's just use the current length of backlog vs total
+
+            curr_step = total_analyze - len(self.progress.analysis_backlog) + 1
+            perc = 0.5 + min((curr_step / total_analyze) * 0.5, 0.5)
+            p_bar.progress(perc, text=f"🧠 Analyzing {job.get('title')} ({curr_step}/{total_analyze})")
             self.progress.update(status=f"Analyzing {job.get('title')}...")
 
-            if jid in cache:
-                continue
+            if jid not in cache:
+                scraped_jd = job.get('rich_description') or job.get('description') or ""
+                if scraped_jd and len(scraped_jd) > 50:
+                    context = f"Title: {job.get('title')}\nCompany: {job.get('company')}\nJD: {scraped_jd}"
+                    try:
+                        crew = JobAnalysisCrew(context, job.get('_resume_text', ''), profile_name="default")
+                        results = crew.run_analysis(components=analysis_components, use_browser=True)
+                        if results and "error" not in results:
+                            self.db.save_cache(jid, results)
+                    except Exception as ae:
+                        logger.error(f"Analysis failed for {jid}: {ae}")
 
-            scraped_jd = job.get('rich_description') or job.get('description') or ""
-            if scraped_jd and len(scraped_jd) > 50:
-                context = f"Title: {job.get('title')}\nCompany: {job.get('company')}\nJD: {scraped_jd}"
+                time.sleep(random.uniform(2, 4))
 
-                try:
-                    crew = JobAnalysisCrew(context, job.get('_resume_text', ''), profile_name="default")
-                    results = crew.run_analysis(components=analysis_components, use_browser=True)
-                    if results and "error" not in results:
-                        self.db.save_cache(jid, results)
-                except Exception as ae:
-                    logger.error(f"Analysis failed for {jid}: {ae}")
-
-            time.sleep(random.uniform(2, 4))
+            # Pop and save
+            self.progress.analysis_backlog.pop(0)
+            self.progress.save()
 
         BrowserManager().close_all_drivers()
+
+    def run_automated_analysis(self, jobs, status_box, p_bar=None):
+        # Legacy method compatibility - just wrap the new loop
+        self.progress.update(analysis_backlog=jobs, phase="Analysis")
+        self._execute_analysis_loop(status_box)
