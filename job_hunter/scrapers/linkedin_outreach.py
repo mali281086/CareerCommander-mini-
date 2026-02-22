@@ -28,6 +28,10 @@ class LinkedInOutreach:
 
     def search_connections(self, location_name="Germany", limit=10, skip_messaged=True):
         self.driver = self.bm.get_driver(headless=False)
+
+        # Ensure we are logged in by loading cookies if we are on a login page or generic home
+        self.bm.load_cookies("https://www.linkedin.com/")
+
         messaged_list = self.db.load_messaged_contacts() if skip_messaged else []
         messaged_names = {c['name'] for c in messaged_list}
 

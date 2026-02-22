@@ -86,23 +86,32 @@ with st.sidebar:
                 "https://www.ziprecruiter.com/login"
             ]
 
-            # Open the first URL in the current window
+            # Open first URL and try loading cookies
             driver.get(urls[0])
+            bm.load_cookies()
 
-            # Open subsequent URLs in new tabs
+            # Open subsequent URLs in new tabs and load cookies for each
             for url in urls[1:]:
                 try:
                     driver.switch_to.new_window('tab')
                     driver.get(url)
+                    bm.load_cookies()
                 except Exception as e:
-                    # Fallback for older selenium if needed, though we have 4.41
+                    # Fallback for older selenium if needed
                     driver.execute_script(f"window.open('{url}', '_blank');")
 
-            st.toast("✅ 5 Login tabs opened!")
+            st.toast("✅ 5 Login tabs opened & Sessions restored!")
             
+        if st.button("💾 Save Session Cookies", use_container_width=True):
+            bm = BrowserManager()
+            bm.save_cookies()
+            st.toast("✅ All session cookies saved!")
+
         if st.button("🔒 Close Browser", use_container_width=True):
-            BrowserManager().close_all_drivers()
-            st.toast("Browser Closed.")
+            bm = BrowserManager()
+            bm.save_cookies()
+            bm.close_all_drivers()
+            st.toast("Browser Closed & Session Saved.")
 
 # --- RENDER VIEW ---
 if st.session_state['page'] == 'home':

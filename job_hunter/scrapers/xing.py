@@ -17,6 +17,7 @@ class XingScraper(BaseScraper):
         return self.bm.get_driver(headless=False, profile_name=self.profile_name)
 
     def search(self, keyword: str, location: str, limit: int = 10, easy_apply: bool = False) -> List[JobRecord]:
+        self.bm.load_cookies("https://www.xing.com/")
         results = []
         search_url = f"https://www.xing.com/jobs/search?keywords={keyword.replace(' ', '%20')}&location={location.replace(' ', '%20')}"
         
@@ -89,6 +90,7 @@ class XingScraper(BaseScraper):
     def fetch_details(self, job_url: str) -> Optional[dict]:
         if not job_url: return None
         
+        self.bm.load_cookies("https://www.xing.com/")
         self.driver.get(job_url)
         self.random_sleep(3, 5)
 

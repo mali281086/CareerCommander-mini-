@@ -98,3 +98,36 @@ OUTPUT ONLY THE JSON ARRAY.
         except Exception as e:
             logger.error(f"Advisor Error: {e}")
             return ["Data Analyst", "Data Scientist", "Business Analyst", "Project Manager", "Software Engineer"]
+
+    def generate_outreach_message(self, resume_text: str) -> str:
+        """
+        Generates a 2-3 line outreach message based on the resume.
+        """
+        if not resume_text or len(resume_text) < 50:
+            return ""
+
+        try:
+            llm = self._get_llm()
+
+            prompt = f"""
+SYSTEM: You are a professional career coach.
+TASK: Write a respectful LinkedIn outreach message to a 1st-degree connection asking for projects or job matches that fit the user's credentials.
+CONSTRAINTS:
+- Length: Strictly 2 to 3 lines.
+- Tone: Professional and respectful.
+- Placeholders: Use {{first_name}} for the recipient's name.
+- Content: Based on the following resume summary.
+
+RESUME:
+{resume_text[:2000]}
+
+OUTPUT ONLY THE MESSAGE CONTENT. NO PREAMBLE.
+"""
+            content = llm.ask(prompt)
+            # Remove any quotes or preamble if LLM added them
+            content = content.strip().strip('"').strip("'")
+            return content
+
+        except Exception as e:
+            logger.error(f"Advisor Outreach Generation Error: {e}")
+            return ""

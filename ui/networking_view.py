@@ -13,8 +13,32 @@ def render_networking_view():
 
         st.info("💡 The bot will skip contacts you have already messaged in previous runs.")
 
+        # Resume Integration
+        resumes = st.session_state.get('resumes', {})
+        if resumes:
+            selected_resume = st.selectbox("Select Resume for Context", options=["None"] + list(resumes.keys()))
+            if selected_resume != "None":
+                if st.button("🪄 Generate Message from Resume"):
+                    from job_hunter.career_advisor import CareerAdvisor
+                    advisor = CareerAdvisor()
+                    with st.spinner("Generating short message..."):
+                        resume_text = resumes[selected_resume].get('text', '')
+                        generated = advisor.generate_outreach_message(resume_text)
+                        if generated:
+                            st.session_state['outreach_msg_template'] = generated
+                            st.rerun()
+                    advisor.close()
+
         default_msg = "Hi {first_name},\n\nI hope you are doing well. I'm currently looking for new projects or job matches that fit my credentials and I noticed you're in my network. If you know of any matching opportunities, I'd appreciate a heads up!\n\nBest regards,"
-        outreach_msg = st.text_area("Message Template", value=default_msg, height=200, help="Use {first_name} or {name} as placeholders.")
+
+        # Use session state to persist generated message across reruns
+        if 'outreach_msg_template' not in st.session_state:
+            st.session_state['outreach_msg_template'] = default_msg
+
+        outreach_msg = st.text_area("Message Template", value=st.session_state['outreach_msg_template'], height=200, help="Use {first_name} or {name} as placeholders.")
+
+        # Sync back to session state if edited manually
+        st.session_state['outreach_msg_template'] = outreach_msg
 
         auto_send = st.checkbox("Auto-send messages (Clicking 'Send' on LinkedIn)", value=False, help="Keep this UNCHECKED to review messages before sending manually.")
 

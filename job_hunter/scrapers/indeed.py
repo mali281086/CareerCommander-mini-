@@ -18,6 +18,7 @@ class IndeedScraper(BaseScraper):
         return self.bm.get_driver(headless=False, profile_name=self.profile_name)
 
     def search(self, keyword: str, location: str, limit: int = 10, easy_apply: bool = False) -> List[JobRecord]:
+        self.bm.load_cookies("https://de.indeed.com/")
         results = []
         domain = "de.indeed.com"
         
@@ -92,6 +93,8 @@ class IndeedScraper(BaseScraper):
 
     def fetch_details(self, job_url: str) -> Optional[dict]:
         if not job_url: return None
+
+        self.bm.load_cookies("https://de.indeed.com/")
         self.driver.get(job_url)
         self.random_sleep(3, 5)
 
