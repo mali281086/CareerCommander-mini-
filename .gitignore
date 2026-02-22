@@ -10,6 +10,7 @@ venv/
 
 # Selenium / Chrome
 chrome_data/
+chrome_profiles/
 chromedriver.exe
 geckodriver.exe
 *.log

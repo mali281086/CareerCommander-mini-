@@ -85,10 +85,20 @@ with st.sidebar:
                 "https://www.stepstone.de/candidate/login",
                 "https://www.ziprecruiter.com/login"
             ]
+
+            # Open the first URL in the current window
             driver.get(urls[0])
+
+            # Open subsequent URLs in new tabs
             for url in urls[1:]:
-                driver.execute_script(f"window.open('{url}', '_blank');")
-            st.toast("✅ Browser opened!")
+                try:
+                    driver.switch_to.new_window('tab')
+                    driver.get(url)
+                except Exception as e:
+                    # Fallback for older selenium if needed, though we have 4.41
+                    driver.execute_script(f"window.open('{url}', '_blank');")
+
+            st.toast("✅ 5 Login tabs opened!")
             
         if st.button("🔒 Close Browser", use_container_width=True):
             BrowserManager().close_all_drivers()
