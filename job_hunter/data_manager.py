@@ -7,6 +7,7 @@ from datetime import datetime
 DATA_DIR = "data"
 SCOUTED_FILE = os.path.join(DATA_DIR, "scouted_jobs.json")
 APPLIED_FILE = os.path.join(DATA_DIR, "applied_jobs.json")
+MESSAGED_CONTACTS_FILE = os.path.join(DATA_DIR, "messaged_contacts.json")
 PARKED_FILE = os.path.join(DATA_DIR, "parked_jobs.json")
 BLACKLIST_FILE = os.path.join(DATA_DIR, "blacklist.json")
 CACHE_FILE = os.path.join(DATA_DIR, "analysis_cache.json")
@@ -39,6 +40,11 @@ class DataManager:
         if not os.path.exists(BLACKLIST_FILE):
              with open(BLACKLIST_FILE, "w", encoding="utf-8") as f: 
                  json.dump({"companies": [], "titles": []}, f)
+
+        # Messaged Contacts: LIST
+        if not os.path.exists(MESSAGED_CONTACTS_FILE):
+            with open(MESSAGED_CONTACTS_FILE, "w", encoding="utf-8") as f:
+                json.dump([], f)
 
     # --- SCOUTED JOBS ---
     def load_scouted(self):
@@ -633,3 +639,26 @@ class DataManager:
         with open(filepath, "w", encoding="utf-8") as f:
             yaml.dump(config_dict, f, default_flow_style=False)
 
+    # --- MESSAGED CONTACTS ---
+    def load_messaged_contacts(self):
+        try:
+            with open(MESSAGED_CONTACTS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return []
+
+    def save_messaged_contact(self, name, profile_url=None):
+        contacts = self.load_messaged_contacts()
+        # Avoid duplicates
+        if any(c.get('name') == name for c in contacts):
+            return contacts
+
+        contacts.append({
+            "name": name,
+            "profile_url": profile_url,
+            "messaged_at": datetime.now().isoformat()
+        })
+
+        with open(MESSAGED_CONTACTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(contacts, f, indent=2, ensure_ascii=False)
+        return contacts

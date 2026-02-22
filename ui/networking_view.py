@@ -8,13 +8,17 @@ def render_networking_view():
 
     with st.container(border=True):
         st.subheader("1. Setup Outreach")
-        outreach_loc = st.text_input("Target Region/Location", value="Germany")
-        outreach_limit = st.number_input("Max Contacts to Message", value=5, min_value=1, max_value=20)
+        outreach_loc = st.text_input("Target Region/Location", value="Germany", help="LinkedIn will search for 1st-degree connections in this location.")
+        outreach_limit = st.number_input("Max Contacts to Process", value=1, min_value=1, max_value=20, help="For testing, start with 1.")
 
-        default_msg = "Hi {first_name},\n\nI hope you are doing well. I am currently exploring new opportunities in the job market and noticed you are based in {location}. I was wondering if you might have any leads or advice for someone with my background. Any assistance would be greatly appreciated!\n\nBest regards,"
-        outreach_msg = st.text_area("Message Template", value=default_msg.replace("{location}", outreach_loc), height=200, help="Use {first_name} as a placeholder.")
+        st.info("💡 The bot will skip contacts you have already messaged in previous runs.")
 
-    if st.button("🔍 Find and Message Contacts", type="primary"):
+        default_msg = "Hi {first_name},\n\nI hope you are doing well. I'm currently looking for new projects or job matches that fit my credentials and I noticed you're in my network. If you know of any matching opportunities, I'd appreciate a heads up!\n\nBest regards,"
+        outreach_msg = st.text_area("Message Template", value=default_msg, height=200, help="Use {first_name} or {name} as placeholders.")
+
+        auto_send = st.checkbox("Auto-send messages (Clicking 'Send' on LinkedIn)", value=False, help="Keep this UNCHECKED to review messages before sending manually.")
+
+    if st.button("🔍 Start Outreach Mission", type="primary"):
         from job_hunter.scrapers.linkedin_outreach import LinkedInOutreach
         outreach = LinkedInOutreach()
 
@@ -25,23 +29,28 @@ def render_networking_view():
             connections = outreach.search_connections(outreach_loc, limit=outreach_limit)
 
             if not connections:
-                status_box.warning("No connections found for the given criteria. Make sure you are logged in to LinkedIn.")
+                status_box.warning("No connections found for the given criteria (or everyone has already been messaged).")
             else:
-                status_box.success(f"Found {len(connections)} connections. Starting outreach...")
+                status_box.success(f"Found {len(connections)} new connections. Processing...")
 
                 progress_bar = st.progress(0)
                 for i, conn in enumerate(connections):
-                    status_box.info(f"Sending message to **{conn['name']}** ({i+1}/{len(connections)})...")
-                    success = outreach.send_message(conn, outreach_msg)
+                    action_text = "Sending" if auto_send else "Preparing"
+                    status_box.info(f"{action_text} message for **{conn['name']}** ({i+1}/{len(connections)})...")
+
+                    success = outreach.send_message(conn, outreach_msg, auto_send=auto_send)
+
                     if success:
-                        st.toast(f"✅ Message sent to {conn['name']}")
+                        result_text = "Sent" if auto_send else "Prepared (Review on LinkedIn)"
+                        st.toast(f"✅ Message {result_text} for {conn['name']}")
                     else:
-                        st.error(f"❌ Failed to send message to {conn['name']}")
+                        st.error(f"❌ Failed to process {conn['name']}")
 
                     progress_bar.progress((i + 1) / len(connections))
-                    time.sleep(random.uniform(2, 5))
+                    if i < len(connections) - 1:
+                        time.sleep(random.uniform(3, 6))
 
-                status_box.success("🎉 Outreach mission complete!")
+                status_box.success("🎉 Outreach mission complete! The browser will stay open for your review.")
 
         except Exception as e:
             st.error(f"An error occurred: {e}")

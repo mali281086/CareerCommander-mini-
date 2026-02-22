@@ -6,11 +6,13 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from tools.browser_manager import BrowserManager
+from job_hunter.data_manager import DataManager
 import random
 
 class LinkedInOutreach:
     def __init__(self):
         self.bm = BrowserManager()
+        self.db = DataManager()
         self.driver = None
 
     def random_sleep(self, min_s=2, max_s=5):
@@ -24,8 +26,10 @@ class LinkedInOutreach:
             return parts[0]
         return "Sir/Madam"
 
-    def search_connections(self, location_name="Germany", limit=10):
+    def search_connections(self, location_name="Germany", limit=10, skip_messaged=True):
         self.driver = self.bm.get_driver(headless=False)
+        messaged_list = self.db.load_messaged_contacts() if skip_messaged else []
+        messaged_names = {c['name'] for c in messaged_list}
 
         # Simple approach: Search for people with location and 1st degree connection
         # We use the search results page
@@ -56,8 +60,16 @@ class LinkedInOutreach:
                     name_elem = item.find_element(By.CSS_SELECTOR, ".entity-result__title-text a span[aria-hidden='true']")
                     full_name = name_elem.text.strip()
 
-                    # Avoid duplicates
+                    link_elem = item.find_element(By.CSS_SELECTOR, ".entity-result__title-text a")
+                    profile_url = link_elem.get_attribute("href").split('?')[0]
+
+                    # Avoid duplicates in current session
                     if any(r['name'] == full_name for r in results):
+                        continue
+
+                    # Skip if already messaged
+                    if full_name in messaged_names:
+                        logger.info(f"Skipping {full_name} (Already messaged)")
                         continue
 
                     # Find Message button
@@ -66,6 +78,7 @@ class LinkedInOutreach:
                         results.append({
                             "name": full_name,
                             "first_name": self.get_first_name(full_name),
+                            "profile_url": profile_url,
                             "element": msg_btn
                         })
                     except:
@@ -85,7 +98,7 @@ class LinkedInOutreach:
 
         return results
 
-    def send_message(self, connection, message_template):
+    def send_message(self, connection, message_template, auto_send=False):
         if not self.driver:
             return False
 
@@ -104,9 +117,10 @@ class LinkedInOutreach:
                 wait = WebDriverWait(self.driver, 5)
                 msg_box = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='textbox'], .msg-form__contenteditable")))
 
-                # Personalize
+                # Personalize (support both {first_name} and {name})
                 first_name = connection['first_name']
-                message = message_template.replace("{first_name}", first_name)
+                full_name = connection['name']
+                message = message_template.replace("{first_name}", first_name).replace("{name}", full_name)
 
                 # Clear and Type
                 msg_box.send_keys(Keys.CONTROL + "a")
@@ -119,23 +133,31 @@ class LinkedInOutreach:
 
                 self.random_sleep(1, 2)
 
-                # Send button
-                send_btn = self.driver.find_element(By.CSS_SELECTOR, ".msg-form__send-button")
-                # Only click if not disabled
-                if send_btn.is_enabled():
-                    # send_btn.click() # COMMENTED OUT FOR SAFETY DURING TESTING, but implementation is there
-                    logger.info(f"Would send message to {connection['name']}")
-                    # For real use:
-                    send_btn.click()
-                    self.random_sleep(1, 2)
+                # Mark as messaged in our database
+                self.db.save_messaged_contact(full_name, connection.get('profile_url'))
 
-                    # Close the message bubble to avoid clutter
-                    close_btn = self.driver.find_element(By.CSS_SELECTOR, "button[class*='msg-overlay-bubble-header__control'][aria-label^='Close']")
-                    close_btn.click()
-                    return True
+                if auto_send:
+                    # Send button
+                    send_btn = self.driver.find_element(By.CSS_SELECTOR, ".msg-form__send-button")
+                    # Only click if not disabled
+                    if send_btn.is_enabled():
+                        logger.info(f"Sending message to {full_name}")
+                        send_btn.click()
+                        self.random_sleep(1, 2)
+
+                        # Close the message bubble to avoid clutter
+                        try:
+                            close_btn = self.driver.find_element(By.CSS_SELECTOR, "button[class*='msg-overlay-bubble-header__control'][aria-label^='Close']")
+                            close_btn.click()
+                        except:
+                            pass
+                        return True
+                    else:
+                        logger.info(f"Send button disabled for {full_name}")
+                        return False
                 else:
-                    logger.info(f"Send button disabled for {connection['name']}")
-                    return False
+                    logger.info(f"Message prepared for {full_name} (Auto-send is OFF)")
+                    return True
 
             except Exception as e:
                 logger.info(f"Error in message box: {e}")
