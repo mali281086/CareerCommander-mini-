@@ -119,7 +119,7 @@ def render_home_view(db):
 
     m_col1, m_col2 = st.columns(2)
     with m_col2:
-        mode = st.radio("🚀 Execution Mode:", ["✨ Easy Apply Live (Scout + Apply Now)", "🔍 Deep Scrape (Scout + Detailed JD + AI Analysis)"], index=1)
+        mode = st.radio("🚀 Execution Mode:", ["✨ Easy Apply Live (Scout + Apply Now)", "🔍 Deep Scrape (Scout + Detailed JD + AI Analysis)"], index=1, key="execution_mode")
 
         st.markdown("---")
         # Global AI Analysis Toggle
@@ -145,6 +145,7 @@ def render_home_view(db):
                 available_platforms,
                 default=available_platforms,
                 disabled=True,
+                key="platforms_live",
                 help="Platform selection is locked in Easy Apply Live mode."
             )
         else:
@@ -152,7 +153,8 @@ def render_home_view(db):
             selected_platforms = st.multiselect(
                 "Target Platforms",
                 available_platforms,
-                default=["LinkedIn", "Indeed", "Xing"]
+                default=["LinkedIn", "Indeed", "Xing"],
+                key="platforms_standard"
             )
 
     st.divider()
