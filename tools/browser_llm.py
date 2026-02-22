@@ -16,7 +16,7 @@ class BrowserLLM:
         "Copilot": "https://copilot.microsoft.com/"
     }
 
-    def __init__(self, provider="ChatGPT", profile_name="default", headless=False):
+    def __init__(self, provider="ChatGPT", profile_name="llm_profile", headless=False):
         self.provider = provider if provider in self.PROVIDERS else "ChatGPT"
         self.profile_name = profile_name
         self.headless = headless

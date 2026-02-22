@@ -7,6 +7,8 @@ from selenium import webdriver
 class BrowserManager:
     _instance = None
     _driver = None
+    _is_headless = False
+    _current_profile = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -19,7 +21,14 @@ class BrowserManager:
             try:
                 # Check if alive
                 self._driver.title
-                return self._driver
+
+                # If the requested mode (headless vs headed) or profile is different,
+                # we must close the current one to avoid conflicts or hidden windows.
+                if self._is_headless != headless or self._current_profile != profile_name:
+                    logger.info(f"Driver mismatch (Headless: {self._is_headless}->{headless}, Profile: {self._current_profile}->{profile_name}). Restarting...")
+                    self.close_driver()
+                else:
+                    return self._driver
             except:
                 # Driver died, recreate
                 self._driver = None
@@ -27,6 +36,8 @@ class BrowserManager:
         return self._init_driver(headless, profile_name)
 
     def _init_driver(self, headless=False, profile_name="default"):
+        self._is_headless = headless
+        self._current_profile = profile_name
         logger.info(f"Initializing Undetected Browser for profile: {profile_name}...")
         
         # Paths

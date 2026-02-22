@@ -64,11 +64,11 @@ class JobAnalysisCrew:
         if components is None:
             components = ['intel', 'cover_letter', 'ats', 'resume']
 
-        logger.info(f"[Analysis] Running browser-based analysis ({self.profile_name}) for: {components}")
+        logger.info(f"[Analysis] Running browser-based analysis for: {components}")
 
         provider = os.getenv("BROWSER_LLM_PROVIDER", "ChatGPT")
-        # Run analysis in headless mode
-        browser_llm = BrowserLLM(provider=provider, profile_name=self.profile_name, headless=True)
+        # Run analysis in headless mode using a dedicated profile to avoid interference
+        browser_llm = BrowserLLM(provider=provider, profile_name="llm_profile", headless=True)
 
         # Construct a combined prompt
         prompt = f"""
