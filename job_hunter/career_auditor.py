@@ -78,7 +78,8 @@ Format your response in professional Markdown. Be harsh, direct, and constructiv
 
         # 4. Invoke LLM via Browser
         try:
-            browser_llm = BrowserLLM(provider="ChatGPT")
+            # Run audit in headless mode
+            browser_llm = BrowserLLM(provider="ChatGPT", headless=True)
             raw_content = browser_llm.ask(prompt)
             browser_llm.close_tab()
             

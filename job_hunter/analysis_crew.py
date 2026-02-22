@@ -67,7 +67,8 @@ class JobAnalysisCrew:
         logger.info(f"[Analysis] Running browser-based analysis ({self.profile_name}) for: {components}")
 
         provider = os.getenv("BROWSER_LLM_PROVIDER", "ChatGPT")
-        browser_llm = BrowserLLM(provider=provider, profile_name=self.profile_name)
+        # Run analysis in headless mode
+        browser_llm = BrowserLLM(provider=provider, profile_name=self.profile_name, headless=True)
 
         # Construct a combined prompt
         prompt = f"""

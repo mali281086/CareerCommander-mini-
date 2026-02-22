@@ -278,7 +278,7 @@ def render_chat_tab(job, resume_data, analysis_results, db):
             with st.spinner("Thinking..."):
                 # Use BrowserLLM for chat if API is removed
                 from tools.browser_llm import BrowserLLM
-                browser_llm = BrowserLLM(provider="ChatGPT")
+                browser_llm = BrowserLLM(provider="ChatGPT", headless=True)
 
                 jd = job.get('rich_description') or job.get('Job Description') or ""
                 context = f"Job: {job['Job Title']} at {job['Company']}\nJD: {jd}\nResume: {resume_data.get('text', '')}"

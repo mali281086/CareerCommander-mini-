@@ -9,7 +9,8 @@ class CareerAdvisor:
 
     def _get_llm(self):
         if self._browser_llm is None:
-            self._browser_llm = BrowserLLM(provider="ChatGPT")
+            # Career suggestions run in headless mode
+            self._browser_llm = BrowserLLM(provider="ChatGPT", headless=True)
         return self._browser_llm
 
     def close(self):

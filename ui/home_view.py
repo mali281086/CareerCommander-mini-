@@ -138,8 +138,8 @@ def render_home_view(db):
         is_easy_apply_live = mode.startswith("✨")
 
         if is_easy_apply_live:
-            available_platforms = ["LinkedIn", "Indeed", "Xing"]
-            st.info("ℹ️ Easy Apply Live is restricted to LinkedIn, Indeed, and Xing.")
+            available_platforms = ["LinkedIn"]
+            st.info("ℹ️ Easy Apply Live is restricted to LinkedIn only.")
             selected_platforms = st.multiselect(
                 "Target Platforms",
                 available_platforms,

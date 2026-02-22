@@ -27,10 +27,11 @@ class MissionManager:
         self.progress.update(is_active=False, status=final_status)
 
     def run_live_apply_mission(self, resumes, locations, limit, platforms, status_box):
-        """1. Easy Apply Live: Scout + Apply Now"""
-        valid_platforms = [p for p in platforms if p in ["LinkedIn", "Xing", "Indeed"]]
+        """1. Easy Apply Live: Scout + Apply Now (Restricted to LinkedIn)"""
+        # Platforms selection from UI is already restricted to ["LinkedIn"] for this mode
+        valid_platforms = [p for p in platforms if p == "LinkedIn"]
         if not valid_platforms:
-            status_box.error("❌ None of the selected platforms support Easy Apply Live.")
+            status_box.error("❌ Easy Apply Live is currently restricted to LinkedIn.")
             return
 
         total_steps = len(resumes) * len(valid_platforms)
@@ -64,10 +65,9 @@ class MissionManager:
                         try:
                             if p_name == "LinkedIn":
                                 res = applier.live_apply_linkedin(kw, loc, target_count=limit, target_role=role_name, callback=lambda m: status_box.info(f"✨ {m}"))
-                            elif p_name == "Xing":
-                                res = applier.live_apply_xing(kw, loc, target_count=limit, target_role=role_name, callback=lambda m: status_box.info(f"✨ {m}"))
-                            elif p_name == "Indeed":
-                                res = applier.live_apply_indeed(kw, loc, target_count=limit, target_role=role_name, callback=lambda m: status_box.info(f"✨ {m}"))
+                            else:
+                                logger.warning(f"Live apply for {p_name} is not supported in this mode.")
+                                res = {'applied': []}
 
                             applied_here = len(res.get('applied', []))
                             self.progress.update(jobs_applied=self.progress.jobs_applied + applied_here)
