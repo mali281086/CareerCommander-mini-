@@ -114,6 +114,18 @@ with st.sidebar:
                     driver.execute_script(f"window.open('{url}', '_blank');")
 
             st.toast("✅ 5 Login tabs opened & Sessions restored!")
+
+        if st.button("🧠 Login to AI (ChatGPT/Gemini)", use_container_width=True):
+            bm = BrowserManager()
+            # AI uses a separate profile to avoid session conflicts
+            driver = bm.get_driver(headless=False, profile_name="llm_profile")
+            driver.get("https://chatgpt.com")
+            try:
+                driver.switch_to.new_window('tab')
+                driver.get("https://gemini.google.com")
+            except:
+                driver.execute_script("window.open('https://gemini.google.com', '_blank');")
+            st.toast("✅ AI Profile opened! Please log in to ChatGPT/Gemini.")
             
         if st.button("💾 Save Session Cookies", use_container_width=True):
             bm = BrowserManager()

@@ -66,9 +66,15 @@ class JobAnalysisCrew:
 
         logger.info(f"[Analysis] Running browser-based analysis for: {components}")
 
+        from job_hunter.data_manager import DataManager
+        db = DataManager()
+        bot_config = db.load_bot_config()
+        # Respect headless setting from bot config, default to True
+        headless = bot_config.get("settings", {}).get("ai_headless", True)
+
         provider = os.getenv("BROWSER_LLM_PROVIDER", "ChatGPT")
-        # Run analysis in headless mode using a dedicated profile to avoid interference
-        browser_llm = BrowserLLM(provider=provider, profile_name="llm_profile", headless=True)
+        # Run analysis using a dedicated profile to avoid interference
+        browser_llm = BrowserLLM(provider=provider, profile_name="llm_profile", headless=headless)
 
         # Construct a combined prompt
         prompt = f"""
@@ -132,7 +138,14 @@ Specific Instructions:
 """
 
         response_text = browser_llm.ask(prompt)
-        results = self._clean_json(response_text)
-        browser_llm.close_tab()
 
+        if response_text.startswith("ERROR:"):
+            browser_llm.close_tab()
+            return {"error": response_text}
+
+        results = self._clean_json(response_text)
+        if not results:
+            results = {"error": f"Failed to parse JSON from AI response. Raw response: {response_text[:200]}..."}
+
+        browser_llm.close_tab()
         return results

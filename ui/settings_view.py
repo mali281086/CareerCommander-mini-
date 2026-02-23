@@ -16,7 +16,13 @@ def render_settings_view(db):
     st.divider()
 
     # Tab layout
-    tab_answers, tab_unknown, tab_add, tab_selectors = st.tabs(["📝 My Answers", "❓ Unknown Questions", "➕ Add New", "🛠️ Advanced Selectors"])
+    tab_answers, tab_unknown, tab_add, tab_behavior, tab_selectors = st.tabs([
+        "📝 My Answers",
+        "❓ Unknown Questions",
+        "➕ Add New",
+        "🤖 Bot Behavior",
+        "🛠️ Advanced Selectors"
+    ])
 
     with tab_answers:
         st.subheader("Current Question-Answer Mappings")
@@ -99,6 +105,26 @@ def render_settings_view(db):
                 st.rerun()
             else:
                 st.error("Please enter both question pattern and answer")
+
+    with tab_behavior:
+        st.subheader("🤖 Bot Behavior Settings")
+
+        if "settings" not in bot_config:
+            bot_config["settings"] = {}
+
+        # Headless AI Toggle
+        current_headless = bot_config.get("settings", {}).get("ai_headless", True)
+        new_headless = st.toggle("Headless AI Analysis", value=current_headless,
+                                 help="If enabled, AI analysis happens in the background. Disable to see the AI browser (useful for logging in or debugging).")
+
+        if new_headless != current_headless:
+            bot_config["settings"]["ai_headless"] = new_headless
+            db.save_bot_config(bot_config)
+            st.toast("✅ Bot Behavior Updated!")
+            st.rerun()
+
+        st.divider()
+        st.caption("Note: These settings affect how the AI Analysis and Auto-Apply engines interact with your browser.")
 
     with tab_selectors:
         st.subheader("🛠️ CSS/XPath Selectors Configuration")

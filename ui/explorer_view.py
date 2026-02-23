@@ -133,8 +133,7 @@ def render_explorer_view(db):
             with c5:
                 act_cols = st.columns(4)
                 if act_cols[0].button("📝", key=f"intel_{job_id}_{idx}", help="Analyze"):
-                    st.session_state['selected_job_for_analysis'] = row.to_dict()
-                    st.session_state['show_analysis_panel'] = True
+                    render_analysis_dialog(row.to_dict(), db)
 
                 if act_cols[1].button("✅", key=f"mark_{job_id}_{idx}", help="Mark as Applied"):
                     st.session_state['applied_jobs'] = db.save_applied(job_id, row.to_dict(), status="applied")
@@ -150,11 +149,6 @@ def render_explorer_view(db):
                     db.delete_scouted_job(row['Job Title'], row['Company'])
                     st.rerun()
 
-    # --- ANALYSIS PANEL ---
-    if st.session_state.get('show_analysis_panel', False):
-        job = st.session_state['selected_job_for_analysis']
-        render_analysis_panel(job, db)
-
     # --- CONFIRMATION DIALOG (Easy Apply Batch) ---
     if st.session_state.get('show_easy_apply_confirm', False):
         render_easy_apply_confirm(eligible_for_easy, db)
@@ -164,16 +158,12 @@ def render_explorer_view(db):
     with st.expander("📈 Metrics and Visualisations", expanded=False):
         render_metrics_dashboard(df_display, st.session_state['applied_jobs'], len(db.load_parked()))
 
-def render_analysis_panel(job, db):
+@st.dialog("🧠 Job Analysis", width="large")
+def render_analysis_dialog(job, db):
     job_id = f"{job['Job Title']}-{job['Company']}"
-    st.markdown("---")
-    st.subheader(f"🧠 AI Analysis: {job['Job Title']} @ {job['Company']}")
+    st.subheader(f"{job['Job Title']} @ {job['Company']}")
 
-    if st.button("❌ Close Analysis Panel"):
-        st.session_state['show_analysis_panel'] = False
-        st.rerun()
-
-    # Analysis logic (similar to app.py)
+    # Analysis logic
     # Check if in cache
     cache = db.load_cache()
     is_analyzed = job_id in cache
@@ -278,7 +268,11 @@ def render_chat_tab(job, resume_data, analysis_results, db):
             with st.spinner("Thinking..."):
                 # Use BrowserLLM for chat if API is removed
                 from tools.browser_llm import BrowserLLM
-                browser_llm = BrowserLLM(provider="ChatGPT", headless=True)
+
+                bot_config = db.load_bot_config()
+                headless = bot_config.get("settings", {}).get("ai_headless", True)
+
+                browser_llm = BrowserLLM(provider="ChatGPT", headless=headless)
 
                 jd = job.get('rich_description') or job.get('Job Description') or ""
                 context = f"Job: {job['Job Title']} at {job['Company']}\nJD: {jd}\nResume: {resume_data.get('text', '')}"

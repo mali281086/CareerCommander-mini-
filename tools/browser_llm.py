@@ -140,6 +140,11 @@ class BrowserLLM:
         """Sends prompt and waits for response."""
         self._ensure_tab()
 
+        # Pre-check for login wall
+        current_url = self.driver.current_url.lower()
+        if "login" in current_url or "auth" in current_url or "sign-in" in current_url:
+             return f"ERROR: Browser is stuck on a login/auth page ({current_url}). Please log in using the 'Login to AI' button in the sidebar."
+
         if self.provider == "ChatGPT":
             return self._ask_chatgpt(prompt, timeout)
         elif self.provider == "Gemini":
