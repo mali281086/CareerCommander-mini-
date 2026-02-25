@@ -36,11 +36,26 @@ class MissionManager:
             status_box.error("❌ Easy Apply Live is currently restricted to LinkedIn.")
             return
 
-        total_steps = len(resumes) * len(valid_platforms)
+        # Prepare Tasks
+        tasks = []
+        for role_name, role_data in resumes.items():
+            raw_kw = role_data.get("target_keywords", "")
+            keywords = [k.strip() for k in raw_kw.split(';') if k.strip()]
+            if not keywords: keywords = [role_name]
+            locs = [l.strip() for l in locations.split(';') if l.strip()] or ["Germany"]
+
+            for p_name in valid_platforms:
+                for kw in keywords:
+                    for loc in locs:
+                        tasks.append({"label": f"Live Apply for {kw} in {loc} on {p_name}", "completed": False, "type": "live_apply"})
+
+        total_steps = len(tasks)
         self._start_mission("Easy Apply Live", total_steps=total_steps)
+        self.progress.update(tasks=tasks)
         p_bar = status_box.progress(0, text="🚀 Live Apply Mission Progress")
 
         current_step = 0
+        task_idx = 0
         for role_name, role_data in resumes.items():
             raw_kw = role_data.get("target_keywords", "")
             keywords = [k.strip() for k in raw_kw.split(';') if k.strip()]
@@ -52,13 +67,13 @@ class MissionManager:
             resume_path = role_data.get('file_path')
 
             for p_name in valid_platforms:
-                current_step += 1
-                perc = min(current_step / total_steps, 1.0)
-                p_bar.progress(perc, text=f"🚀 Applying on {p_name} ({current_step}/{total_steps})")
-                self.progress.update(current_step=current_step, status=f"Live Applying on {p_name}...")
-
                 for kw in keywords:
                     for loc in locs:
+                        current_step += 1
+                        perc = min(current_step / total_steps, 1.0)
+                        p_bar.progress(perc, text=f"🚀 Applying for {kw} on {p_name} ({current_step}/{total_steps})")
+                        self.progress.update(current_step=current_step, status=f"Live Applying for {kw} on {p_name}...")
+
                         msg = f"✨ Applying for **{kw}** in **{loc}** via **{p_name}**..."
                         status_box.info(msg)
                         logger.info(msg)
@@ -72,7 +87,10 @@ class MissionManager:
                                 res = {'applied': []}
 
                             applied_here = len(res.get('applied', []))
+                            # Update task completion
+                            self.progress.tasks[task_idx]['completed'] = True
                             self.progress.update(jobs_applied=self.progress.jobs_applied + applied_here)
+                            task_idx += 1
 
                         except Exception as e:
                             logger.error(f"Error during Live Apply on {p_name}: {e}")
@@ -85,7 +103,13 @@ class MissionManager:
     def run_batch_apply_mission(self, eligible_jobs, resume_path, phone_number, status_box):
         """2. Easy Apply Batch: Apply to already scouted jobs"""
         count = len(eligible_jobs)
+        tasks = []
+        for job in eligible_jobs:
+            title = job.get('title') or job.get('Job Title') or "Unknown Title"
+            tasks.append({"label": f"Apply to {title}", "completed": False, "type": "apply"})
+
         self._start_mission("Easy Apply Batch", total_steps=count)
+        self.progress.update(tasks=tasks)
         p_bar = status_box.progress(0, text="🤖 Batch Apply Progress")
 
         applier = JobApplier(resume_path=resume_path, phone_number=phone_number)
@@ -122,6 +146,10 @@ class MissionManager:
                     self.progress.update(jobs_applied=self.progress.jobs_applied + 1)
                 elif "expired" in message.lower() or "no longer accepting" in message.lower():
                     self.db.park_job(title, company, job)
+
+                # Mark task as completed
+                self.progress.tasks[i]['completed'] = True
+                self.progress.save()
             except Exception as e:
                 logger.error(f"Batch apply error for {title}: {e}")
 
@@ -135,8 +163,9 @@ class MissionManager:
         """3. Launch All Mission: Scout + Deep Scrape + AI Analysis (Resumable)"""
         platforms_arg = platforms if platforms else ["LinkedIn"]
 
-        # Prepare Backlog
+        # Prepare Backlog and Tasks
         backlog = []
+        tasks = []
         for role_name, role_data in resumes.items():
             raw_kw = role_data.get("target_keywords", "")
             keywords = [k.strip() for k in raw_kw.split(';') if k.strip()]
@@ -152,12 +181,16 @@ class MissionManager:
                             "role_name": role_name, "resume_text": role_data.get('text', ''),
                             "resume_filename": role_data.get("filename", role_name)
                         })
+                        tasks.append({"label": f"Scrape for {kw} on {p}", "completed": False, "type": "scout"})
+
+        if use_browser_analysis:
+            tasks.append({"label": "Run AI Analysis for 0 Jobs", "completed": False, "type": "analyze"})
 
         total_steps = len(backlog)
         self._start_mission("Scout & Analyze", total_steps=total_steps, config_context={
             "limit": limit, "deep_scrape": deep_scrape, "use_browser_analysis": use_browser_analysis
         })
-        self.progress.update(scouting_backlog=backlog, phase="Scouting")
+        self.progress.update(scouting_backlog=backlog, phase="Scouting", tasks=tasks)
 
         self.resume_mission(status_box)
 
@@ -181,10 +214,18 @@ class MissionManager:
 
     def _check_interrupts(self, status_box):
         """Checks for internet connection and pause state."""
-        # 1. Internet check
+        # 1. Internet check with 3 retries
         if not is_internet_available():
-            status_box.warning("📶 Internet disconnected. Pausing mission automatically...")
-            self.progress.update(is_paused=True, status="Paused (No Internet)")
+            resilient = False
+            for i in range(3):
+                time.sleep(2)
+                if is_internet_available():
+                    resilient = True
+                    break
+
+            if not resilient:
+                status_box.warning("📶 Internet disconnected. Pausing mission automatically...")
+                self.progress.update(is_paused=True, status="Paused (No Internet)")
 
         # 2. Pause check
         while self.progress.is_paused:
@@ -241,6 +282,19 @@ class MissionManager:
                 # Add to analysis backlog
                 if use_analysis:
                     self.progress.analysis_backlog.extend(results)
+
+                # Update task status
+                for task in self.progress.tasks:
+                    if task['label'] == f"Scrape for {kw} on {p_name}" and task['type'] == "scout":
+                        task['completed'] = True
+                        break
+
+                # Update analysis task label
+                for task in self.progress.tasks:
+                    if task['type'] == "analyze":
+                        new_count = len(self.progress.analysis_backlog)
+                        task['label'] = f"Run AI Analysis for {new_count} Jobs"
+                        break
 
                 self.progress.update(jobs_scouted=self.progress.jobs_scouted + len(results))
 
@@ -310,6 +364,13 @@ class MissionManager:
             # Pop and save
             self.progress.analysis_backlog.pop(0)
             self.progress.save()
+
+        # Mark analysis task as completed
+        for task in self.progress.tasks:
+            if task['type'] == "analyze":
+                task['completed'] = True
+                break
+        self.progress.save()
 
         BrowserManager().close_all_drivers()
 

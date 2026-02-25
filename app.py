@@ -37,6 +37,18 @@ def navigate_to(page):
 with st.sidebar:
     # --- MISSION STATUS WIDGET ---
     progress = MissionProgress.load()
+
+    # If not active but has tasks from last run, show a summary
+    if not progress.is_active and progress.tasks:
+        with st.expander("📊 Last Mission Summary", expanded=False):
+            st.write(f"**Type:** {progress.mission_type}")
+            st.write(f"**Status:** {progress.status}")
+            st.write(f"✅ Applied: {progress.jobs_applied}")
+            st.write(f"🛰️ Scouted: {progress.jobs_scouted}")
+            if st.button("Clear Summary", use_container_width=True):
+                progress.reset()
+                st.rerun()
+
     if progress.is_active:
         with st.expander(f"🛰️ Active Mission: {progress.mission_type}", expanded=True):
             st.write(f"**Status:** {progress.status}")
@@ -49,6 +61,16 @@ with st.sidebar:
             if progress.total_steps > 0:
                 perc = min(progress.current_step / progress.total_steps, 1.0)
                 st.progress(perc, text=f"Progress: {progress.current_step}/{progress.total_steps}")
+
+            # Tasks List
+            if progress.tasks:
+                st.markdown("---")
+                for i, task in enumerate(progress.tasks):
+                    label = task.get('label')
+                    if task.get('completed'):
+                        st.markdown(f"✅ ~~{i+1}. {label}~~")
+                    else:
+                        st.markdown(f"{i+1}. {label}")
 
             # Control Buttons
             c1, c2 = st.columns(2)

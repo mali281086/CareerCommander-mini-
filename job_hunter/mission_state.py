@@ -23,6 +23,9 @@ class MissionProgress:
     pending_question: Optional[str] = None
     pending_decision: Optional[str] = None # For "Skip or Retry" prompts
 
+    # Roadmap of tasks
+    tasks: List[dict] = field(default_factory=list) # [{"label": str, "completed": bool, "type": str}]
+
     # Backlog of work to allow resumption
     scouting_backlog: List[dict] = field(default_factory=list) # [{kw, loc, platform, role_name, resume_text}]
     analysis_backlog: List[dict] = field(default_factory=list) # List of scouted job dicts
@@ -65,6 +68,7 @@ class MissionProgress:
         self.errors = []
         self.pending_question = None
         self.pending_decision = None
+        self.tasks = []
         self.scouting_backlog = []
         self.analysis_backlog = []
         self.config_context = {}

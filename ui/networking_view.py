@@ -2,9 +2,15 @@ import streamlit as st
 import time
 import random
 
+from job_hunter.mission_state import MissionProgress
+
 def render_networking_view():
     st.title("🤝 LinkedIn Networking Outreach")
     st.write("Connect with your existing LinkedIn contacts in specific regions.")
+
+    progress = MissionProgress.load()
+    if progress.is_active:
+        st.warning("⚠️ An active mission is running in the background. Networking outreach may conflict with browser tasks. Please pause or stop the mission first.")
 
     with st.container(border=True):
         st.subheader("1. Setup Outreach")
