@@ -310,6 +310,17 @@ class DataManager:
             with open(CACHE_FILE, "r", encoding="utf-8") as f: return json.load(f)
         except: return {}
 
+    def generate_job_id(self, title, company, resume_name=None):
+        """Generates a consistent ID for job records and cache keys."""
+        t = str(title or "Unknown").strip()
+        c = str(company or "Unknown").strip()
+        base = f"{t}-{c}"
+        if resume_name:
+            # Strip extension from resume name for cleaner keys if it's a filename
+            r_name = os.path.splitext(resume_name)[0]
+            return f"{base}-{r_name}"
+        return base
+
     def save_cache(self, job_id, results):
         data = self.load_cache()
         data[job_id] = results

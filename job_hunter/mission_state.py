@@ -13,6 +13,7 @@ class MissionProgress:
     phase: str = "None" # "Scouting", "Analysis", "Applying"
     current_step: int = 0
     total_steps: int = 0
+    current_task_idx: int = -1 # Index in the tasks list
     jobs_applied: int = 0
     jobs_scouted: int = 0
     errors: List[str] = field(default_factory=list)
@@ -63,6 +64,7 @@ class MissionProgress:
         self.phase = "None"
         self.current_step = 0
         self.total_steps = 0
+        self.current_task_idx = -1
         self.jobs_applied = 0
         self.jobs_scouted = 0
         self.errors = []

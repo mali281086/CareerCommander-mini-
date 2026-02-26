@@ -112,12 +112,18 @@ class IndeedScraper(BaseScraper):
         except: pass
 
         # Description
-        desc_selectors = ["#jobDescriptionText", "[id*='jobDescription']", ".jobsearch-JobComponent-description"]
+        desc_selectors = [
+            "#jobDescriptionText",
+            "[id*='jobDescription']",
+            ".jobsearch-JobComponent-description",
+            ".jobsearch-jobDescriptionText",
+            "[data-testid='jobsearch-JobDescriptionText']"
+        ]
         for selector in desc_selectors:
             try:
                 el = self.driver.find_element(By.CSS_SELECTOR, selector)
-                if el and len(el.text) > 50:
-                    details["description"] = el.text
+                if el and len(el.text.strip()) > 50:
+                    details["description"] = el.text.strip()
                     break
             except: continue
 

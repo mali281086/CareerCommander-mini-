@@ -163,45 +163,54 @@ def render_home_view(db):
     from job_hunter.mission_state import MissionProgress
     progress = MissionProgress.load()
 
-    if progress.is_active and (progress.scouting_backlog or progress.analysis_backlog):
-        st.info(f"⏳ An incomplete mission (**{progress.mission_type}**) was found. You can resume it or start a new one.")
-        if st.button("▶️ Resume Previous Mission", type="primary", use_container_width=True):
-            from job_hunter.mission_manager import MissionManager
-            mm = MissionManager(db)
-            with st.status("🚀 Resuming Mission...", expanded=True) as status_box:
-                mm.resume_mission(status_box)
+    launch_container = st.empty()
 
-            st.cache_data.clear()
-            st.session_state['page'] = 'explorer'
-            st.rerun()
-        st.divider()
+    # Helper to clear the launch controls when a mission starts
+    def clear_controls():
+        launch_container.empty()
 
-    col_launch, col_skip = st.columns([2, 1])
+    with launch_container.container():
+        if progress.is_active and (progress.scouting_backlog or progress.analysis_backlog):
+            st.info(f"⏳ An incomplete mission (**{progress.mission_type}**) was found. You can resume it or start a new one.")
+            if st.button("▶️ Resume Previous Mission", type="primary", use_container_width=True):
+                clear_controls()
+                from job_hunter.mission_manager import MissionManager
+                mm = MissionManager(db)
+                with st.status("🚀 Resuming Mission...", expanded=True) as status_box:
+                    mm.resume_mission(status_box)
 
-    with col_launch:
-        if st.button("🚀 Launch New Mission", type="primary", use_container_width=True, disabled=not st.session_state['resumes']):
-            from job_hunter.mission_manager import MissionManager
-            mm = MissionManager(db)
+                st.cache_data.clear()
+                st.session_state['page'] = 'explorer'
+                st.rerun()
+            st.divider()
 
-            with st.status("🚀 Launching Missions...", expanded=True) as status_box:
-                if mode.startswith("✨"):
-                    mm.run_live_apply_mission(
-                        resumes=st.session_state['resumes'],
-                        locations=scrape_location,
-                        limit=scrape_limit,
-                        platforms=selected_platforms,
-                        status_box=status_box
-                    )
-                else:
-                    mm.run_standard_scrape_mission(
-                        resumes=st.session_state['resumes'],
-                        locations=scrape_location,
-                        limit=scrape_limit,
-                        platforms=selected_platforms,
-                        deep_scrape=deep_scrape_toggle,
-                        use_browser_analysis=use_browser_analysis,
-                        status_box=status_box
-                    )
+        col_launch, col_skip = st.columns([2, 1])
+
+        with col_launch:
+            if st.button("🚀 Launch New Mission", type="primary", use_container_width=True, disabled=not st.session_state['resumes']):
+                clear_controls()
+                from job_hunter.mission_manager import MissionManager
+                mm = MissionManager(db)
+
+                with st.status("🚀 Launching Missions...", expanded=True) as status_box:
+                    if mode.startswith("✨"):
+                        mm.run_live_apply_mission(
+                            resumes=st.session_state['resumes'],
+                            locations=scrape_location,
+                            limit=scrape_limit,
+                            platforms=selected_platforms,
+                            status_box=status_box
+                        )
+                    else:
+                        mm.run_standard_scrape_mission(
+                            resumes=st.session_state['resumes'],
+                            locations=scrape_location,
+                            limit=scrape_limit,
+                            platforms=selected_platforms,
+                            deep_scrape=deep_scrape_toggle,
+                            use_browser_analysis=use_browser_analysis,
+                            status_box=status_box
+                        )
 
             st.cache_data.clear()
             st.session_state['page'] = 'explorer'

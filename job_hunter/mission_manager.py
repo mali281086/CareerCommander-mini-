@@ -51,7 +51,7 @@ class MissionManager:
 
         total_steps = len(tasks)
         self._start_mission("Easy Apply Live", total_steps=total_steps)
-        self.progress.update(tasks=tasks)
+        self.progress.update(tasks=tasks, current_task_idx=0)
         p_bar = status_box.progress(0, text="🚀 Live Apply Mission Progress")
 
         current_step = 0
@@ -72,7 +72,7 @@ class MissionManager:
                         current_step += 1
                         perc = min(current_step / total_steps, 1.0)
                         p_bar.progress(perc, text=f"🚀 Applying for {kw} on {p_name} ({current_step}/{total_steps})")
-                        self.progress.update(current_step=current_step, status=f"Live Applying for {kw} on {p_name}...")
+                        self.progress.update(current_step=current_step, current_task_idx=task_idx, status=f"Live Applying for {kw} on {p_name}...")
 
                         msg = f"✨ Applying for **{kw}** in **{loc}** via **{p_name}**..."
                         status_box.info(msg)
@@ -109,7 +109,7 @@ class MissionManager:
             tasks.append({"label": f"Apply to {title}", "completed": False, "type": "apply"})
 
         self._start_mission("Easy Apply Batch", total_steps=count)
-        self.progress.update(tasks=tasks)
+        self.progress.update(tasks=tasks, current_task_idx=0)
         p_bar = status_box.progress(0, text="🤖 Batch Apply Progress")
 
         applier = JobApplier(resume_path=resume_path, phone_number=phone_number)
@@ -132,7 +132,7 @@ class MissionManager:
             title = get_valid_val(job, "title", "Job Title") or "Unknown Title"
             company = get_valid_val(job, "company", "Company") or "Unknown Company"
 
-            self.progress.update(current_step=curr, status=f"Applying to {title}...")
+            self.progress.update(current_step=curr, current_task_idx=i, status=f"Applying to {title}...")
             status_box.text(f"🚀 [{i+1}/{count}] Applying to {title} @ {company}...")
 
             if not url or not platform:
@@ -186,11 +186,11 @@ class MissionManager:
         if use_browser_analysis:
             tasks.append({"label": "Run AI Analysis for 0 Jobs", "completed": False, "type": "analyze"})
 
-        total_steps = len(backlog)
+        total_steps = len(tasks)
         self._start_mission("Scout & Analyze", total_steps=total_steps, config_context={
             "limit": limit, "deep_scrape": deep_scrape, "use_browser_analysis": use_browser_analysis
         })
-        self.progress.update(scouting_backlog=backlog, phase="Scouting", tasks=tasks)
+        self.progress.update(scouting_backlog=backlog, phase="Scouting", tasks=tasks, current_task_idx=0)
 
         self.resume_mission(status_box)
 
@@ -251,7 +251,8 @@ class MissionManager:
 
     def _execute_scouting_loop(self, status_box):
         scout = Scout()
-        total_backlog_start = self.progress.total_steps
+        # Find how many scouting tasks total to track relative progress correctly
+        total_scout_tasks = len([t for t in self.progress.tasks if t['type'] == 'scout'])
         use_analysis = self.progress.config_context.get("use_browser_analysis", True)
         limit = self.progress.config_context.get("limit", 15)
         deep_scrape = self.progress.config_context.get("deep_scrape", True)
@@ -264,12 +265,29 @@ class MissionManager:
             item = self.progress.scouting_backlog[0]
             kw, loc, p_name = item['keyword'], item['location'], item['platform']
 
-            # Calculate progress
-            current_idx = total_backlog_start - len(self.progress.scouting_backlog) + 1
-            self.progress.update(current_step=current_idx, status=f"Scouting {kw} on {p_name}...")
+            # Find the current task index in the full tasks list
+            task_label = f"Scrape for {kw} in {loc} on {p_name}"
+            current_task_idx = -1
+            for idx, t in enumerate(self.progress.tasks):
+                if t['label'] == task_label and t['type'] == "scout" and not t['completed']:
+                    current_task_idx = idx
+                    break
 
-            perc = min((current_idx / total_backlog_start) * 0.5, 0.5) if use_analysis else min(current_idx / total_backlog_start, 1.0)
-            p_bar.progress(perc, text=f"🛰️ Scouting {kw} ({current_idx}/{total_backlog_start})")
+            # If we didn't find it by label/uncompleted, just find the first uncompleted scout task
+            if current_task_idx == -1:
+                for idx, t in enumerate(self.progress.tasks):
+                    if t['type'] == "scout" and not t['completed']:
+                        current_task_idx = idx
+                        break
+
+            # Progress calculation based on completed tasks
+            completed_scout_count = len([t for t in self.progress.tasks if t['type'] == 'scout' and t['completed']])
+            current_step = completed_scout_count + 1
+
+            self.progress.update(current_step=current_step, current_task_idx=current_task_idx, status=f"Scouting {kw} on {p_name}...")
+
+            perc = min(current_step / self.progress.total_steps, 1.0)
+            p_bar.progress(perc, text=f"🛰️ Scouting {kw} ({current_step}/{self.progress.total_steps})")
 
             try:
                 results = scout.launch_mission(
@@ -283,6 +301,7 @@ class MissionManager:
                 )
                 for r in results:
                     r['_resume_text'] = item.get('resume_text', '')
+                    r['_resume_filename'] = item.get('resume_filename', '')
                     r['_role_name'] = item.get('role_name', '')
 
                 # Add to analysis backlog
@@ -319,10 +338,11 @@ class MissionManager:
         p_bar.progress(0.5, text="🛰️ Scouting Complete!")
 
     def _execute_analysis_loop(self, status_box):
-        # Deduplicate backlog
+        # Deduplicate backlog (Resume-aware)
         unique_jobs = {}
         for job in self.progress.analysis_backlog:
-            jid = f"{job.get('title')}-{job.get('company')}"
+            # Include resume in key for deduplication to ensure all resume variations are analyzed
+            jid = self.db.generate_job_id(job.get('title'), job.get('company'), job.get('_resume_filename'))
             if jid not in unique_jobs:
                 unique_jobs[jid] = job
 
@@ -338,21 +358,27 @@ class MissionManager:
         cache = self.db.load_cache()
         analysis_components = ["intel", "cover_letter", "ats", "resume"]
 
+        # Find the analysis task index
+        analysis_task_idx = -1
+        for idx, t in enumerate(self.progress.tasks):
+            if t['type'] == "analyze":
+                analysis_task_idx = idx
+                break
+
         while self.progress.analysis_backlog:
             if not self._check_interrupts(status_box): return
 
             job = self.progress.analysis_backlog[0]
-            jid = f"{job.get('title')}-{job.get('company')}"
+            r_name = job.get('_resume_filename')
+            jid = self.db.generate_job_id(job.get('title'), job.get('company'), r_name)
 
             # Progress calculation
-            # We use a simple count for display
-            done_count = total_analyze - len(unique_jobs) + 1 # This is tricky if backlog has duplicates
-            # Let's just use the current length of backlog vs total
+            # Analysis is the last step usually
+            self.progress.update(current_task_idx=analysis_task_idx, current_step=self.progress.total_steps, status=f"Analyzing {job.get('title')}...")
+            p_bar.progress(1.0, text=f"🧠 Analyzing {job.get('title')} (Resume: {r_name})...")
 
-            curr_step = total_analyze - len(self.progress.analysis_backlog) + 1
-            perc = 0.5 + min((curr_step / total_analyze) * 0.5, 0.5)
-            p_bar.progress(perc, text=f"🧠 Analyzing {job.get('title')} ({curr_step}/{total_analyze})")
-            self.progress.update(status=f"Analyzing {job.get('title')}...")
+            # Reload cache each time to stay fresh
+            cache = self.db.load_cache()
 
             if jid not in cache:
                 scraped_jd = job.get('rich_description') or job.get('description') or ""
@@ -363,8 +389,17 @@ class MissionManager:
                         results = crew.run_analysis(components=analysis_components, use_browser=True)
                         if results and "error" not in results:
                             self.db.save_cache(jid, results)
+                        else:
+                            err_msg = results.get('error', 'Unknown Error')
+                            logger.error(f"Analysis failed for {jid}: {err_msg}")
+                            # Save a temporary error record so we don't keep retrying this session
+                            self.db.save_cache(jid, {"error": err_msg, "status": "failed"})
                     except Exception as ae:
                         logger.error(f"Analysis failed for {jid}: {ae}")
+                        self.db.save_cache(jid, {"error": str(ae), "status": "failed"})
+                else:
+                    logger.warning(f"Skipping analysis for {jid}: No description found (length: {len(scraped_jd)})")
+                    self.db.save_cache(jid, {"error": "No description found", "status": "skipped"})
 
                 time.sleep(random.uniform(2, 4))
 

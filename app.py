@@ -69,10 +69,14 @@ with st.sidebar:
                 with st.container(height=300):
                     for i, task in enumerate(progress.tasks):
                         label = task.get('label')
+                        is_current = (i == progress.current_task_idx)
+
                         if task.get('completed'):
                             st.markdown(f"✅ ~~{i+1}. {label}~~")
+                        elif is_current:
+                            st.markdown(f"🟡 **{i+1}. {label}**")
                         else:
-                            st.markdown(f"{i+1}. {label}")
+                            st.markdown(f"⚪ {i+1}. {label}")
 
             # Control Buttons
             from job_hunter.mission_manager import MissionManager

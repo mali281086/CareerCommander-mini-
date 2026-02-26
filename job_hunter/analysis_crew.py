@@ -64,7 +64,12 @@ class JobAnalysisCrew:
         if components is None:
             components = ['intel', 'cover_letter', 'ats', 'resume']
 
-        logger.info(f"[Analysis] Running browser-based analysis for: {components}")
+        # Truncate inputs to avoid LLM limits and browser paste issues
+        # 3000 chars is usually safe for most LLMs and doesn't lose critical context
+        truncated_job = self.job_text[:3000] if self.job_text else ""
+        truncated_resume = self.resume_text[:3000] if self.resume_text else ""
+
+        logger.info(f"[Analysis] Running browser-based analysis for components: {components}")
 
         from job_hunter.data_manager import DataManager
         db = DataManager()
@@ -81,10 +86,10 @@ class JobAnalysisCrew:
 I need you to perform a job analysis based on the following Job Description and my Resume.
 
 JOB DESCRIPTION:
-{self.job_text}
+{truncated_job}
 
 RESUME:
-{self.resume_text}
+{truncated_resume}
 
 Please provide the following components in a single VALID JSON object.
 Ensure the JSON is well-formatted and can be parsed.

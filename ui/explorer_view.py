@@ -160,19 +160,20 @@ def render_explorer_view(db):
 
 @st.dialog("🧠 Job Analysis", width="large")
 def render_analysis_dialog(job, db):
-    job_id = f"{job['Job Title']}-{job['Company']}"
     st.subheader(f"{job['Job Title']} @ {job['Company']}")
 
-    # Analysis logic
+    # Resume Selection for analysis (Must be before job_id calc for resume-awareness)
+    resume_options = list(st.session_state.get('resumes', {}).keys())
+    selected_resume_key = st.selectbox("Analyze with Resume:", resume_options, key="analyze_resume_sel")
+    selected_resume_data = st.session_state['resumes'].get(selected_resume_key, {})
+
+    # Analysis logic (Resume-aware)
+    job_id = db.generate_job_id(job['Job Title'], job['Company'], selected_resume_key)
+
     # Check if in cache
     cache = db.load_cache()
     is_analyzed = job_id in cache
     analysis_results = cache.get(job_id, {})
-
-    # Resume Selection for analysis
-    resume_options = list(st.session_state.get('resumes', {}).keys())
-    selected_resume_key = st.selectbox("Analyze with Resume:", resume_options, key="analyze_resume_sel")
-    selected_resume_data = st.session_state['resumes'].get(selected_resume_key, {})
 
     if st.button("🤖 Run/Refresh AI Analysis", type="primary"):
         if not selected_resume_data:
@@ -237,10 +238,10 @@ def render_analysis_dialog(job, db):
                     st.warning("PDF bytes not found in session. Try re-uploading.")
 
     with tab5:
-        render_chat_tab(job, selected_resume_data, analysis_results, db)
+        render_chat_tab(job, selected_resume_key, selected_resume_data, analysis_results, db)
 
-def render_chat_tab(job, resume_data, analysis_results, db):
-    job_id = f"{job['Job Title']}-{job['Company']}"
+def render_chat_tab(job, resume_name, resume_data, analysis_results, db):
+    job_id = db.generate_job_id(job['Job Title'], job['Company'], resume_name)
 
     c_chat1, c_chat2 = st.columns([1, 1])
 
