@@ -181,7 +181,7 @@ class MissionManager:
                             "role_name": role_name, "resume_text": role_data.get('text', ''),
                             "resume_filename": role_data.get("filename", role_name)
                         })
-                        tasks.append({"label": f"Scrape for {kw} on {p}", "completed": False, "type": "scout"})
+                        tasks.append({"label": f"Scrape for {kw} in {loc} on {p}", "completed": False, "type": "scout"})
 
         if use_browser_analysis:
             tasks.append({"label": "Run AI Analysis for 0 Jobs", "completed": False, "type": "analyze"})
@@ -211,6 +211,12 @@ class MissionManager:
 
         if self.progress.is_active and not self.progress.scouting_backlog and not self.progress.analysis_backlog:
             self._finish_mission()
+
+    def kill_mission(self):
+        """Stops the mission and clears all associated data."""
+        self.progress.reset()
+        self.db.clear_scouted_jobs()
+        BrowserManager().close_all_drivers()
 
     def _check_interrupts(self, status_box):
         """Checks for internet connection and pause state."""
@@ -284,8 +290,9 @@ class MissionManager:
                     self.progress.analysis_backlog.extend(results)
 
                 # Update task status
+                task_label = f"Scrape for {kw} in {loc} on {p_name}"
                 for task in self.progress.tasks:
-                    if task['label'] == f"Scrape for {kw} on {p_name}" and task['type'] == "scout":
+                    if task['label'] == task_label and task['type'] == "scout":
                         task['completed'] = True
                         break
 

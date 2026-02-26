@@ -65,14 +65,19 @@ with st.sidebar:
             # Tasks List
             if progress.tasks:
                 st.markdown("---")
-                for i, task in enumerate(progress.tasks):
-                    label = task.get('label')
-                    if task.get('completed'):
-                        st.markdown(f"✅ ~~{i+1}. {label}~~")
-                    else:
-                        st.markdown(f"{i+1}. {label}")
+                st.caption("Mission Roadmap:")
+                with st.container(height=300):
+                    for i, task in enumerate(progress.tasks):
+                        label = task.get('label')
+                        if task.get('completed'):
+                            st.markdown(f"✅ ~~{i+1}. {label}~~")
+                        else:
+                            st.markdown(f"{i+1}. {label}")
 
             # Control Buttons
+            from job_hunter.mission_manager import MissionManager
+            mm = MissionManager(db)
+
             c1, c2 = st.columns(2)
             if progress.is_paused:
                 if c1.button("▶️ Resume", use_container_width=True):
@@ -83,9 +88,14 @@ with st.sidebar:
                     progress.update(is_paused=True, status="Paused (Manual)")
                     st.rerun()
 
-            if c2.button("🛑 Stop", use_container_width=True):
+            if c2.button("🛑 Stop", use_container_width=True, help="Stop mission and clear progress list."):
                 progress.reset()
                 BrowserManager().close_all_drivers()
+                st.rerun()
+
+            if st.button("💀 Kill Mission & Clear Data", use_container_width=True, type="secondary", help="Stop everything and DELETE all scouted jobs."):
+                mm.kill_mission()
+                st.toast("💥 Mission killed and scouted jobs cleared!")
                 st.rerun()
 
             if progress.pending_question:

@@ -226,6 +226,12 @@ class DataManager:
             
         return new_list
 
+    def clear_scouted_jobs(self):
+        """Clears all jobs from scouted_jobs.json."""
+        with open(SCOUTED_FILE, "w", encoding="utf-8") as f:
+            json.dump([], f)
+        return []
+
     def archive_applied_jobs(self):
         """
         Removes jobs from 'scouted_jobs.json' that are present in 'applied_jobs.json'.
