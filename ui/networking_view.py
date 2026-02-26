@@ -14,7 +14,10 @@ def render_networking_view():
 
     with st.container(border=True):
         st.subheader("1. Setup Outreach")
-        outreach_loc = st.text_input("Target Region/Location", value="Germany", help="LinkedIn will search for 1st-degree connections in this location.")
+        col_out1, col_out2 = st.columns(2)
+        outreach_loc = col_out1.text_input("Target Region/Location", value="Germany", help="LinkedIn will search for 1st-degree connections in this location.")
+        outreach_kw = col_out2.text_input("Filter by Keyword (Optional)", value="Recruiter", help="e.g. Recruiter, Hiring Manager, HR")
+
         outreach_limit = st.number_input("Max Contacts to Process", value=1, min_value=1, max_value=20, help="For testing, start with 1.")
 
         st.info("💡 The bot will skip contacts you have already messaged in previous runs.")
@@ -54,9 +57,12 @@ def render_networking_view():
 
         try:
             status_box = st.empty()
-            status_box.info(f"Searching for 1st-degree connections in **{outreach_loc}**...")
+            search_desc = f"**{outreach_loc}**"
+            if outreach_kw:
+                search_desc += f" with keyword **'{outreach_kw}'**"
+            status_box.info(f"Searching for 1st-degree connections in {search_desc}...")
 
-            connections = outreach.search_connections(outreach_loc, limit=outreach_limit)
+            connections = outreach.search_connections(outreach_loc, limit=outreach_limit, keywords=outreach_kw)
 
             if not connections:
                 status_box.warning("No connections found for the given criteria (or everyone has already been messaged).")

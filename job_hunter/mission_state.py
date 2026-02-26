@@ -52,7 +52,11 @@ class MissionProgress:
             try:
                 with open(STATE_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    return cls(**data)
+                    # Filter out keys that aren't in the dataclass
+                    from dataclasses import fields
+                    field_names = {f.name for f in fields(cls)}
+                    filtered_data = {k: v for k, v in data.items() if k in field_names}
+                    return cls(**filtered_data)
             except:
                 pass
         return cls(mission_type="None")

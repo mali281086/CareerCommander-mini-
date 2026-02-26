@@ -27,7 +27,7 @@ class LinkedInOutreach:
             return parts[0]
         return "Sir/Madam"
 
-    def search_connections(self, location_name="Germany", limit=10, skip_messaged=True):
+    def search_connections(self, location_name="Germany", limit=10, skip_messaged=True, keywords=None):
         self.driver = self.bm.get_driver(headless=False)
 
         # Ensure we are logged in by loading cookies if we are on a login page or generic home
@@ -41,14 +41,21 @@ class LinkedInOutreach:
         base_url = "https://www.linkedin.com/search/results/people/?"
         params = {
             "network": '["F"]', # 1st degree
-            "origin": "FACETED_SEARCH",
-            "keywords": location_name # Using location as keyword in search is a fallback if geoId is unknown
+            "origin": "FACETED_SEARCH"
         }
+
+        if keywords:
+            params["keywords"] = f"{keywords} {location_name}"
+        else:
+            params["keywords"] = location_name
 
         # Heuristic for Germany geoId
         if location_name.lower() == "germany":
-            params["locationBy"] = '["101282230"]'
-            del params["keywords"]
+            params["geoUrn"] = '["101282230"]'
+            if keywords:
+                params["keywords"] = keywords
+            else:
+                del params["keywords"]
 
         url = base_url + urllib.parse.urlencode(params)
         logger.info(f"[LinkedIn Outreach] Navigating to: {url}")
