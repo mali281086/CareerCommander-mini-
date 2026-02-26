@@ -212,10 +212,10 @@ def render_home_view(db):
                             status_box=status_box
                         )
 
-            st.cache_data.clear()
-            st.session_state['page'] = 'explorer'
-            time.sleep(1)
-            st.rerun()
+                st.cache_data.clear()
+                st.session_state['page'] = 'explorer'
+                time.sleep(1)
+                st.rerun()
 
     with col_skip:
          if st.button("📂 View Existing Results", use_container_width=True):
