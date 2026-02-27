@@ -44,18 +44,19 @@ class LinkedInOutreach:
             "origin": "FACETED_SEARCH"
         }
 
-        if keywords:
-            params["keywords"] = f"{keywords} {location_name}"
-        else:
-            params["keywords"] = location_name
-
-        # Heuristic for Germany geoId
+        # If location is 'Germany', use geoUrn to be more precise
         if location_name.lower() == "germany":
             params["geoUrn"] = '["101282230"]'
             if keywords:
                 params["keywords"] = keywords
+        elif location_name:
+            # Fallback to keyword location if no geoUrn known
+            if keywords:
+                params["keywords"] = f"{keywords} {location_name}"
             else:
-                del params["keywords"]
+                params["keywords"] = location_name
+        elif keywords:
+            params["keywords"] = keywords
 
         url = base_url + urllib.parse.urlencode(params)
         logger.info(f"[LinkedIn Outreach] Navigating to: {url}")
@@ -128,15 +129,19 @@ class LinkedInOutreach:
                 bubbles = self.driver.find_elements(By.CSS_SELECTOR, ".msg-overlay-bubble-header")
                 already_open = False
                 for b in bubbles:
-                    if full_name in b.text:
+                    # Case-insensitive and substring match for name in header
+                    if full_name.lower() in b.text.lower():
                         already_open = True
-                        b.click() # Focus it
+                        try: b.click() # Focus it
+                        except: self.driver.execute_script("arguments[0].click();", b)
                         break
 
                 if not already_open:
-                    msg_btn.click()
+                    try: msg_btn.click()
+                    except: self.driver.execute_script("arguments[0].click();", msg_btn)
             except:
-                msg_btn.click()
+                try: msg_btn.click()
+                except: self.driver.execute_script("arguments[0].click();", msg_btn)
 
             random_wait(2, 4)
 
@@ -144,23 +149,26 @@ class LinkedInOutreach:
             # We look for the active one or the last one
             try:
                 # Wait for the message overlay to appear
-                wait = WebDriverWait(self.driver, 5)
+                wait = WebDriverWait(self.driver, 10)
                 # Selectors for the message input area
                 msg_box_selectors = [
                     "div[role='textbox']",
                     ".msg-form__contenteditable",
-                    "div[aria-label^='Write a message']",
-                    "div[aria-label^='Nachricht schreiben']"
+                    "div[aria-label*='Write a message']",
+                    "div[aria-label*='Nachricht schreiben']",
+                    "div[aria-label*='message']",
+                    ".msg-form__message-texteditor"
                 ]
 
                 msg_box = None
                 for sel in msg_box_selectors:
                     try:
                         elements = self.driver.find_elements(By.CSS_SELECTOR, sel)
-                        if elements:
-                            # Use the last one (usually the most recently opened)
-                            msg_box = elements[-1]
-                            break
+                        for el in reversed(elements): # Check from newest/last
+                            if el.is_displayed():
+                                msg_box = el
+                                break
+                        if msg_box: break
                     except:
                         continue
 
@@ -172,14 +180,14 @@ class LinkedInOutreach:
                 first_name = connection['first_name']
                 message = message_template.replace("{first_name}", first_name).replace("{name}", full_name)
 
-                # Clear
+                # Clear and Type
                 msg_box.click()
                 msg_box.send_keys(Keys.CONTROL + "a")
                 msg_box.send_keys(Keys.BACKSPACE)
                 random_wait(0.5, 1)
 
                 # Type message human-like
-                lines = message.split('\n')
+                lines = [l.strip() for l in message.split('\n') if l.strip()]
                 for i, line in enumerate(lines):
                     type_human_like(msg_box, line)
                     if i < len(lines) - 1:

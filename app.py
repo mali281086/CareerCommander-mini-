@@ -111,7 +111,10 @@ with st.sidebar:
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.image("Logo.png", width=120)
+        if os.path.exists("Logo.png"):
+            st.image("Logo.png", width=120)
+        else:
+            st.markdown("### 🚀 CareerCommander")
 
     st.markdown("---")
     if st.button("🏠 Home / Launch", use_container_width=True): navigate_to('home')

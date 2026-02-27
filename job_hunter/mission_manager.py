@@ -290,6 +290,9 @@ class MissionManager:
             p_bar.progress(perc, text=f"🛰️ Scouting {kw} ({current_step}/{self.progress.total_steps})")
 
             try:
+                # Add a small delay to ensure Streamlit can process previous updates
+                time.sleep(0.5)
+
                 results = scout.launch_mission(
                      keyword=kw,
                      location=loc,
@@ -376,6 +379,9 @@ class MissionManager:
             # Analysis is the last step usually
             self.progress.update(current_task_idx=analysis_task_idx, current_step=self.progress.total_steps, status=f"Analyzing {job.get('title')}...")
             p_bar.progress(1.0, text=f"🧠 Analyzing {job.get('title')} (Resume: {r_name})...")
+
+            # Small delay for UI stability
+            time.sleep(0.5)
 
             # Reload cache each time to stay fresh
             cache = self.db.load_cache()
