@@ -156,14 +156,43 @@ class BrowserLLM:
 
     def _ask_chatgpt(self, prompt, timeout):
         try:
+            # Check if user is on the logged-out ChatGPT screen
+            try:
+                page_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+                if "log in" in page_text and "sign up" in page_text and not self.driver.find_elements(By.ID, "prompt-textarea"):
+                    return "ERROR: You are logged out of ChatGPT. Please use the 'Login to AI' button in the Bot Setup menu to log in first."
+            except:
+                pass
+                
             # Find prompt area
             wait = WebDriverWait(self.driver, 20)
-            text_area = wait.until(EC.presence_of_element_located((By.ID, "prompt-textarea")))
+            
+            prompt_selectors = [
+                (By.ID, "prompt-textarea"),
+                (By.CSS_SELECTOR, "div[contenteditable='true']"),
+                (By.CSS_SELECTOR, "textarea[placeholder*='Message']")
+            ]
+            
+            text_area = None
+            for by, sel in prompt_selectors:
+                try:
+                    text_area = self.driver.find_element(by, sel)
+                    if text_area.is_displayed():
+                        break
+                except:
+                    pass
+            
+            if not text_area:
+                text_area = wait.until(EC.presence_of_element_located((By.ID, "prompt-textarea")))
 
             # Use JS to set value for large prompts (faster and more reliable)
             self.driver.execute_script("""
                 var el = arguments[0];
-                el.innerText = arguments[1];
+                if (el.tagName === 'TEXTAREA') {
+                    el.value = arguments[1];
+                } else {
+                    el.innerText = arguments[1];
+                }
                 el.dispatchEvent(new Event('input', { bubbles: true }));
                 el.dispatchEvent(new Event('change', { bubbles: true }));
             """, text_area, prompt)

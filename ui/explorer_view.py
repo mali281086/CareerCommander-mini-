@@ -103,7 +103,11 @@ def render_explorer_view(db):
         eligible_count = len(eligible_for_easy)
 
         if st.button(f"🤖 Easy Apply Batch ({eligible_count})", type="primary", use_container_width=True, disabled=(eligible_count == 0)):
-            st.session_state['show_easy_apply_confirm'] = True
+            render_easy_apply_confirm(eligible_for_easy, db)
+
+    with c_act4:
+        if st.button("🧠 Batch AI Analysis", type="secondary", use_container_width=True):
+            render_batch_analysis_confirm(filtered, db)
 
     # --- DATA GRID ---
     st.subheader(f"Results ({len(filtered)})")
@@ -119,7 +123,11 @@ def render_explorer_view(db):
         with st.container():
             c1, c2, c3, c4, c5 = st.columns([3, 2, 1, 1, 2])
 
-            c1.markdown(f"**{row['Job Title']}**")
+            if row.get('link'):
+                c1.markdown(f"**[{row['Job Title']}]({row['link']})**")
+            else:
+                c1.markdown(f"**{row['Job Title']}**")
+                
             c1.caption(f"{row['Company']} | {row['Platform']} | {row['Language']}")
 
             if row['Easy Apply']:
@@ -131,27 +139,32 @@ def render_explorer_view(db):
 
             # Action buttons
             with c5:
-                act_cols = st.columns(4)
-                if act_cols[0].button("📝", key=f"intel_{job_id}_{idx}", help="Analyze"):
+                act_cols = st.columns(5)
+                
+                if row.get('link'):
+                    act_cols[0].link_button("🔗", row['link'], help="Open Job Link")
+                else:
+                    act_cols[0].button("🔗", disabled=True, key=f"nolink_{job_id}_{idx}")
+                
+                if act_cols[1].button("📝", key=f"intel_{job_id}_{idx}", help="Analyze"):
                     render_analysis_dialog(row.to_dict(), db)
 
-                if act_cols[1].button("✅", key=f"mark_{job_id}_{idx}", help="Mark as Applied"):
+                if act_cols[2].button("✅", key=f"mark_{job_id}_{idx}", help="Mark as Applied"):
                     st.session_state['applied_jobs'] = db.save_applied(job_id, row.to_dict(), status="applied")
                     db.archive_applied_jobs()
                     st.toast(f"Marked {row['Job Title']} as Applied!")
                     st.rerun()
 
-                if act_cols[2].button("🅿️", key=f"park_{job_id}_{idx}", help="Park (Hide)"):
+                if act_cols[3].button("🅿️", key=f"park_{job_id}_{idx}", help="Park (Hide)"):
                     db.park_job(row['Job Title'], row['Company'], row.to_dict())
                     st.rerun()
 
-                if act_cols[3].button("🗑️", key=f"del_{job_id}_{idx}", help="Delete"):
+                if act_cols[4].button("🗑️", key=f"del_{job_id}_{idx}", help="Delete"):
                     db.delete_scouted_job(row['Job Title'], row['Company'])
                     st.rerun()
 
     # --- CONFIRMATION DIALOG (Easy Apply Batch) ---
-    if st.session_state.get('show_easy_apply_confirm', False):
-        render_easy_apply_confirm(eligible_for_easy, db)
+    # Dialog is now opened directly via button click above
 
     # --- METRICS ---
     st.markdown("---")
@@ -290,6 +303,7 @@ def render_chat_tab(job, resume_name, resume_data, analysis_results, db):
                 db.save_cache(job_id, st.session_state['job_cache'][job_id])
                 st.rerun()
 
+@st.dialog("🚀 Confirm Batch Apply")
 def render_easy_apply_confirm(eligible_jobs, db):
     st.warning("⚠️ **Confirmation Required**")
     count = len(eligible_jobs)
@@ -302,8 +316,6 @@ def render_easy_apply_confirm(eligible_jobs, db):
 
     c1, c2 = st.columns(2)
     if c1.button("✅ Confirm Auto-Apply", type="primary"):
-        st.session_state['show_easy_apply_confirm'] = False
-
         from job_hunter.mission_manager import MissionManager
         mm = MissionManager(db)
 
@@ -323,5 +335,68 @@ def render_easy_apply_confirm(eligible_jobs, db):
         st.rerun()
 
     if c2.button("❌ Cancel"):
-        st.session_state['show_easy_apply_confirm'] = False
         st.rerun()
+
+@st.dialog("🧠 Confirm Batch Analysis")
+def render_batch_analysis_confirm(filtered_jobs, db):
+    resume_options = list(st.session_state.get('resumes', {}).keys())
+    if not resume_options:
+        st.warning("Please upload a resume first.")
+        return
+        
+    selected_resume_key = st.selectbox("Analyze all un-analyzed jobs with Resume:", resume_options)
+    
+    # Calculate how many are missing analysis
+    cache = db.load_cache()
+    missing_jobs = []
+    
+    for idx, row in filtered_jobs.iterrows():
+        job_id = db.generate_job_id(row['Job Title'], row['Company'], selected_resume_key)
+        # Include if not in cache OR if the cached result is an error
+        if job_id not in cache or "error" in cache.get(job_id, {}):
+            missing_jobs.append(row.to_dict())
+            
+    st.info(f"Out of the current filtered results, **{len(missing_jobs)}** jobs are missing AI Analysis.")
+    
+    if len(missing_jobs) == 0:
+        st.success("All jobs are already processed!")
+        if st.button("Close"):
+            st.rerun()
+        return
+
+    c1, c2 = st.columns(2)
+    if c1.button("✅ Run Background Batch", type="primary"):
+        resume_data = st.session_state['resumes'].get(selected_resume_key, {})
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        from job_hunter.analysis_crew import JobAnalysisCrew
+        import time
+        
+        with st.spinner("Processing in background..."):
+            for i, job in enumerate(missing_jobs):
+                status_text.text(f"Analyzing: {job['Job Title']} at {job['Company']} ({i+1}/{len(missing_jobs)})...")
+                jd = job.get('rich_description') or job.get('Job Description') or ""
+                context = f"Title: {job['Job Title']}\nCompany: {job['Company']}\nJD: {jd}"
+
+                crew = JobAnalysisCrew(context, resume_data['text'])
+                results = crew.run_analysis(use_browser=True)
+                
+                if results and "error" not in results:
+                    job_id = db.generate_job_id(job['Job Title'], job['Company'], selected_resume_key)
+                    db.save_cache(job_id, results)
+                    st.session_state['job_cache'][job_id] = results
+                else:
+                    st.toast(f"Skipped {job['Company']} (Error). Keep monitoring.", icon="⚠️")
+                
+                progress_bar.progress((i + 1) / len(missing_jobs))
+                time.sleep(2)  # Avoid instantly hammering ChatGPT
+                
+        st.success("Batch Analysis Complete!")
+        if st.button("Finish & Refresh"):
+            st.rerun()
+
+    if c2.button("❌ Cancel"):
+        st.rerun()
+

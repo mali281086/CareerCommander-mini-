@@ -150,7 +150,11 @@ with st.sidebar:
                     bm.load_cookies()
                 except Exception as e:
                     # Fallback for older selenium if needed
-                    driver.execute_script(f"window.open('{url}', '_blank');")
+                    try:
+                        driver.execute_script(f"window.open('{url}', '_blank');")
+                    except Exception as e2:
+                        import logging
+                        logging.getLogger("CareerCommander").warning(f"Failed to open tab for {url}: {e2}")
 
             st.toast("✅ 5 Login tabs opened & Sessions restored!")
 

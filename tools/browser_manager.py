@@ -61,26 +61,67 @@ class BrowserManager:
 
         try:
             # undetected_chromedriver automatically bypasses most bot detection
-            # Explicitly passing user_data_dir to constructor as well for redundancy
-            driver = uc.Chrome(
-                options=options,
-                user_data_dir=user_data_dir,
-                headless=headless
-            )
-            
-            # Optional: Apply stealth as well for extra protection
             try:
-                from selenium_stealth import stealth
-                stealth(driver,
-                    languages=["en-US", "en", "de"],
-                    vendor="Google Inc.",
-                    platform="Win32",
-                    webgl_vendor="Intel Inc.",
-                    renderer="Intel Iris OpenGL Engine",
-                    fix_hairline=True,
+                driver = uc.Chrome(
+                    options=options,
+                    user_data_dir=user_data_dir,
+                    headless=headless
                 )
-            except ImportError:
-                pass
+            except Exception as e:
+                # If there is a version mismatch, try to extract the user's Chrome version from the error
+                import re
+                error_msg = str(e)
+                logger.warning(f"Failed to launch uc.Chrome initially: {error_msg}")
+                match = re.search(r'Current browser version is (\d+)', error_msg)
+                
+                if match:
+                    major_version = int(match.group(1))
+                    logger.info(f"Retrying undetected_chromedriver with version_main={major_version}...")
+                    
+                    # Must recreate options object because uc.Chrome mutates it
+                    new_options = uc.ChromeOptions()
+                    new_options.add_argument("--start-maximized")
+                    new_options.add_argument(f"--user-data-dir={user_data_dir}")
+                    new_options.add_argument("--no-first-run")
+                    new_options.add_argument("--no-service-autorun")
+                    new_options.add_argument("--password-store=basic")
+                    if headless:
+                        new_options.add_argument("--headless")
+                        
+                    driver = uc.Chrome(
+                        options=new_options,
+                        user_data_dir=user_data_dir,
+                        headless=headless,
+                        version_main=major_version
+                    )
+                elif "chrome not reachable" in error_msg or "cannot connect to chrome" in error_msg:
+                    logger.warning(f"Detected locked zombie Chrome process for {profile_name}. Attempting to kill it...")
+                    # Automatically hunt and terminate stranded Chrome instances holding this specific profile
+                    import subprocess
+                    import time
+                    ps_cmd = f"Get-CimInstance Win32_Process | Where-Object {{ $_.Name -eq 'chrome.exe' -and $_.CommandLine -match '{profile_name}' }} | Invoke-CimMethod -MethodName Terminate"
+                    subprocess.run(["powershell", "-command", ps_cmd], capture_output=True, text=True)
+                    time.sleep(2)  # Give OS time to free file locks
+                    logger.info("Retrying driver launch after zombie cleanup...")
+                    
+                    new_options = uc.ChromeOptions()
+                    new_options.add_argument("--start-maximized")
+                    new_options.add_argument(f"--user-data-dir={user_data_dir}")
+                    new_options.add_argument("--no-first-run")
+                    new_options.add_argument("--no-service-autorun")
+                    new_options.add_argument("--password-store=basic")
+                    if headless:
+                        new_options.add_argument("--headless")
+                        
+                    driver = uc.Chrome(
+                        options=new_options,
+                        user_data_dir=user_data_dir,
+                        headless=headless
+                    )
+                else:
+                    raise e
+                    
+            # Stealth removed: selenium-stealth breaks modern Cloudflare (Indeed, Xing, ZipRecruiter)
             
             self._driver = driver
             logger.info(f"Undetected Browser launched with profile: {user_data_dir}")
