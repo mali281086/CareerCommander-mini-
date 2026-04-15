@@ -4,13 +4,20 @@ import re
 from tools.browser_llm import BrowserLLM
 
 class CareerAdvisor:
-    def __init__(self):
+    def __init__(self, db=None):
         self._browser_llm = None
+        self.db = db
 
     def _get_llm(self):
         if self._browser_llm is None:
-            # Career suggestions run in headless mode
-            self._browser_llm = BrowserLLM(provider="ChatGPT", headless=True)
+            # Load headless setting from bot config if db is available
+            headless = True
+            if self.db:
+                config = self.db.load_bot_config()
+                headless = config.get("settings", {}).get("ai_headless", True)
+            
+            # Career suggestions run with the configured headless mode
+            self._browser_llm = BrowserLLM(provider="ChatGPT", headless=headless)
         return self._browser_llm
 
     def close(self):
@@ -90,15 +97,15 @@ OUTPUT ONLY THE JSON ARRAY.
             suggestions = self._clean_json_array(content)
 
             if not suggestions:
-                # Fallback if parsing fails
-                logger.warning("Advisor failed to parse LLM output. Using fallbacks.")
-                return ["Data Analyst", "Data Scientist", "Business Analyst", "Project Manager", "Software Engineer"]
+                # Log correctly but return empty to let UI handle the error
+                logger.warning(f"Advisor failed to parse LLM output for resume ({len(resume_text)} chars).")
+                return []
 
             return suggestions[:5]
 
         except Exception as e:
             logger.error(f"Advisor Error: {e}")
-            return ["Data Analyst", "Data Scientist", "Business Analyst", "Project Manager", "Software Engineer"]
+            return []
 
     def generate_outreach_message(self, resume_text: str) -> str:
         """

@@ -58,9 +58,12 @@ def render_home_view(db):
             if st.button("Seek AI Suggested Job Titles", use_container_width=True, help="AI will analyze your resumes to suggest suitable job titles."):
                 from job_hunter.career_advisor import CareerAdvisor
                 # Optimized: Instantiate once to reuse the browser session
-                advisor = CareerAdvisor()
+                advisor = CareerAdvisor(db=db)
 
                 with st.spinner("AI is analyzing your resumes..."):
+                    success_count = 0
+                    fail_count = 0
+                    
                     for name, data in st.session_state['resumes'].items():
                         suggestions = advisor.suggest_roles(data.get('text', ''))
                         if suggestions:
@@ -68,10 +71,20 @@ def render_home_view(db):
                             st.session_state['resumes'][name]['target_keywords'] = kw_str
                             # Also update the widget's state if it exists to ensure UI reflects change
                             st.session_state[f"kw_{name}"] = kw_str
+                            success_count += 1
+                        else:
+                            fail_count += 1
 
                     advisor.close()
                     db.save_resume_config(st.session_state['resumes'])
-                    st.success("✅ AI suggestions applied!")
+                    
+                    if success_count > 0:
+                        st.success(f"✅ AI suggestions applied for {success_count} resume(s)!")
+                    
+                    if fail_count > 0:
+                        st.warning(f"⚠️ AI analysis failed for {fail_count} resume(s).")
+                        st.info("💡 Try logging in first using 'Bot Setup (Login)' or disable 'Headless AI Analysis' in Bot Settings.")
+                    
                     st.rerun()
             st.caption("Let AI suggest job titles that fit your background.")
         else:
