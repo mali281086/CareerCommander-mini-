@@ -1,6 +1,7 @@
 import streamlit as st
 import time
 import random
+import os
 from datetime import datetime
 from job_hunter.scout import Scout
 from job_hunter.applier import JobApplier
@@ -100,7 +101,7 @@ class MissionManager:
         self.db.archive_applied_jobs()
         self._finish_mission()
 
-    def run_batch_apply_mission(self, eligible_jobs, resume_path, phone_number, status_box):
+    def run_batch_apply_mission(self, eligible_jobs, resume_path, phone_number, status_box, resume_mapping=None):
         """2. Easy Apply Batch: Apply to already scouted jobs"""
         count = len(eligible_jobs)
         tasks = []
@@ -112,7 +113,9 @@ class MissionManager:
         self.progress.update(tasks=tasks, current_task_idx=0)
         p_bar = status_box.progress(0, text="🤖 Batch Apply Progress")
 
+        # Initial Applier with fallback resume
         applier = JobApplier(resume_path=resume_path, phone_number=phone_number)
+        resume_mapping = resume_mapping or {}
 
         def get_valid_val(j, *keys):
             for k in keys:
@@ -131,9 +134,24 @@ class MissionManager:
             platform = get_valid_val(job, "platform", "Platform")
             title = get_valid_val(job, "title", "Job Title") or "Unknown Title"
             company = get_valid_val(job, "company", "Company") or "Unknown Company"
+            
+            # --- AUTO RESUME SELECTION ---
+            # Prioritize the original resume filename from scouted metadata
+            original_resume_file = job.get('_resume_filename')
+            if original_resume_file and original_resume_file in resume_mapping:
+                specific_path = resume_mapping[original_resume_file]
+                if applier.resume_path != specific_path:
+                    logger.info(f"🔄 Switching resume to: {original_resume_file} for {title}")
+                    applier.resume_path = specific_path
+                res_display = original_resume_file
+            else:
+                # Silent system fallback to the first available/passed resume
+                if resume_path and applier.resume_path != resume_path:
+                    applier.resume_path = resume_path
+                res_display = os.path.basename(applier.resume_path) if applier.resume_path else 'No Resume'
 
             self.progress.update(current_step=curr, current_task_idx=i, status=f"Applying to {title}...")
-            status_box.text(f"🚀 [{i+1}/{count}] Applying to {title} @ {company}...")
+            status_box.text(f"🚀 [{i+1}/{count}] Applying to {title} @ {company} using {res_display}...")
 
             if not url or not platform:
                 logger.warning(f"Skipping job {title} due to missing URL or Platform.")
@@ -141,6 +159,13 @@ class MissionManager:
 
             try:
                 success, message, is_easy = applier.apply(url, platform, skip_detection=True, job_title=title, company=company)
+                
+                # Correction Logic: If discovery reveals this is NOT an easy apply job, update the DB
+                if is_easy is False:
+                    logger.info(f"📍 Database Correction: {title} marked as STANDARD (not easy apply)")
+                    job['is_easy_apply'] = False
+                    # We will save all corrections at the end of the loop
+
                 if success:
                     self.db.save_applied(f"{title}-{company}", job, {"auto_applied": True})
                     self.progress.update(jobs_applied=self.progress.jobs_applied + 1)
@@ -156,6 +181,27 @@ class MissionManager:
             time.sleep(random.uniform(2, 5)) # Human jitter
 
         applier.close()
+        
+        # Persist Discoveries (if any is_easy_apply flags were changed)
+        # archive_applied_jobs already loads and saves scouted_jobs, but it removes them.
+        # We need to ensure the Standard (False) status is saved for non-applied jobs too.
+        current_scouted = self.db.load_scouted()
+        updated_count = 0
+        
+        # Create a lookup for jobs in the batch that were corrected
+        corrected_links = {j.get('link'): j.get('is_easy_apply') for j in eligible_jobs if j.get('link') and j.get('is_easy_apply') is False}
+        
+        if corrected_links:
+            for s_job in current_scouted:
+                s_link = s_job.get('link')
+                if s_link in corrected_links:
+                    s_job['is_easy_apply'] = False
+                    updated_count += 1
+            
+            if updated_count > 0:
+                self.db.save_scouted_jobs(current_scouted, append=False)
+                logger.info(f"✅ Persisted {updated_count} Easy Apply corrections to database.")
+
         self.db.archive_applied_jobs()
         self._finish_mission()
 
@@ -163,18 +209,25 @@ class MissionManager:
         """3. Launch All Mission: Scout + Deep Scrape + AI Analysis (Resumable)"""
         platforms_arg = platforms if platforms else ["LinkedIn"]
 
-        # Prepare Backlog and Tasks
+        # Build Backlog and calculate metrics for logging
         backlog = []
         tasks = []
+        total_resumes = len(resumes)
+        total_keywords = 0
+        locs_list = [l.strip() for l in locations.split(';') if l.strip()] or ["Germany"]
+        total_locs = len(locs_list)
+        total_platforms = len(platforms_arg)
+
         for role_name, role_data in resumes.items():
             raw_kw = role_data.get("target_keywords", "")
             keywords = [k.strip() for k in raw_kw.split(';') if k.strip()]
             if not keywords: keywords = [role_name]
+            total_keywords += len(keywords)
 
             self.db.save_resume_title_history(role_data.get("filename", role_name), keywords)
 
             for kw in keywords:
-                for loc in [l.strip() for l in locations.split(';') if l.strip()] or ["Germany"]:
+                for loc in locs_list:
                     for p in platforms_arg:
                         backlog.append({
                             "keyword": kw, "location": loc, "platform": p,
@@ -183,10 +236,23 @@ class MissionManager:
                         })
                         tasks.append({"label": f"Scrape for {kw} in {loc} on {p}", "completed": False, "type": "scout"})
 
+        scout_task_count = len(tasks)
         if use_browser_analysis:
-            tasks.append({"label": "Run AI Analysis for 0 Jobs", "completed": False, "type": "analyze"})
+            tasks.append({"label": "Run AI Analysis for all found jobs", "completed": False, "type": "analyze"})
 
         total_steps = len(tasks)
+        
+        # Log breakdown to status box and console
+        breakdown_msg = f"📊 **Mission Breakdown**: {total_steps} Tasks total\n"
+        breakdown_msg += f"- Scouting: {scout_task_count} ({total_resumes} Resumes x avg {total_keywords/total_resumes:.1f} Titles x {total_locs} Locs x {total_platforms} Platforms)\n"
+        if use_browser_analysis:
+            breakdown_msg += f"- AI Phase: Automated analysis enabled"
+        else:
+            breakdown_msg += f"- AI Phase: Batch/Manual mode selected"
+            
+        status_box.markdown(breakdown_msg)
+        logger.info(breakdown_msg.replace("**", ""))
+
         self._start_mission("Scout & Analyze", total_steps=total_steps, config_context={
             "limit": limit, "deep_scrape": deep_scrape, "use_browser_analysis": use_browser_analysis
         })

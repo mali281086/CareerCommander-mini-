@@ -104,11 +104,32 @@ class IndeedScraper(BaseScraper):
             "language": "en"
         }
 
-        # Easy Apply Check
+        # Stricter Indeed Easy Apply Check
         try:
-            page_source = self.driver.page_source.lower()
-            if any(phrase in page_source for phrase in ["easily apply", "einfach bewerben", "schnellbewerbung"]):
-                details["is_easy_apply"] = True
+            # Look for the "Apply with Indeed" or "Schnellbewerbung" button specifically
+            apply_selectors = [
+                "button.jobsearch-IndeedApplyButton-button",
+                "#indeedApplyButton",
+                "[data-testid='indeedApplyButton']",
+                ".jobsearch-IndeedApplyButton-contentWrapper button"
+            ]
+            for selector in apply_selectors:
+                try:
+                    btn = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if btn.is_displayed():
+                        # Double check it's not a generic company button
+                        btn_text = btn.text.lower()
+                        if any(k in btn_text for k in ["apply", "bewerben", "schnell"]):
+                             if not any(k in btn_text for k in ["employer", "external", "extern", "arbeitgeber"]):
+                                 details["is_easy_apply"] = True
+                                 break
+                except: continue
+            
+            # Fallback: Check for the specific Easy Apply badge on the page
+            if not details["is_easy_apply"]:
+                badges = self.driver.find_elements(By.CSS_SELECTOR, ".ialbl, [data-testid='indeedApply']")
+                if any(b.is_displayed() for b in badges):
+                    details["is_easy_apply"] = True
         except: pass
 
         # Description

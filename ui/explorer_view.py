@@ -13,6 +13,10 @@ def render_explorer_view(db):
         st.warning("No data found. Please go back and run a search.")
         return
 
+    # Initialize selection state
+    if 'selected_jobs' not in st.session_state:
+        st.session_state['selected_jobs'] = set()
+
     # Convert to DataFrame for easier handling
     df = pd.DataFrame(scouted_jobs)
     # Ensure columns exist
@@ -106,11 +110,26 @@ def render_explorer_view(db):
             render_easy_apply_confirm(eligible_for_easy, db)
 
     with c_act4:
-        if st.button("🧠 Batch AI Analysis", type="secondary", use_container_width=True):
-            render_batch_analysis_confirm(filtered, db)
+        selected_count = len(st.session_state['selected_jobs'])
+        btn_label = f"🧠 Batch AI Analysis ({selected_count})" if selected_count > 0 else "🧠 Batch AI Analysis"
+        if st.button(btn_label, type="secondary", use_container_width=True, disabled=(selected_count == 0)):
+            # Filter specifically selected jobs
+            selected_df = filtered[filtered.apply(lambda r: f"{r['Job Title']}-{r['Company']}" in st.session_state['selected_jobs'], axis=1)]
+            render_batch_analysis_confirm(selected_df, db)
 
     # --- DATA GRID ---
+    st.markdown("---")
     st.subheader(f"Results ({len(filtered)})")
+
+    # Selection Helpers
+    c_sel1, c_sel2, c_sel3 = st.columns([1, 1, 4])
+    if c_sel1.button("✅ Select All Filtered", use_container_width=True):
+        for idx, row in filtered.iterrows():
+            st.session_state['selected_jobs'].add(f"{row['Job Title']}-{row['Company']}")
+        st.rerun()
+    if c_sel2.button("🚫 Clear Selection", use_container_width=True):
+        st.session_state['selected_jobs'] = set()
+        st.rerun()
 
     # Sort by Platform, then Title
     filtered = filtered.sort_values(by=["Platform", "Job Title"])
@@ -119,9 +138,21 @@ def render_explorer_view(db):
     for idx, row in filtered.iterrows():
         job_id = f"{row['Job Title']}-{row['Company']}"
         is_applied = (row["Status"] != "")
+        is_selected = job_id in st.session_state['selected_jobs']
 
         with st.container():
-            c1, c2, c3, c4, c5 = st.columns([3, 2, 1, 1, 2])
+            # Adjusted columns to include checkbox
+            c_sel, c1, c2, c3, c4, c5 = st.columns([0.3, 3, 2, 1, 1, 2.5])
+
+            # Checkbox for selection
+            if c_sel.checkbox(" ", key=f"sel_{job_id}_{idx}", value=is_selected):
+                if not is_selected:
+                    st.session_state['selected_jobs'].add(job_id)
+                    st.rerun()
+            else:
+                if is_selected:
+                    st.session_state['selected_jobs'].remove(job_id)
+                    st.rerun()
 
             if row.get('link'):
                 c1.markdown(f"**[{row['Job Title']}]({row['link']})**")
@@ -309,9 +340,12 @@ def render_easy_apply_confirm(eligible_jobs, db):
     count = len(eligible_jobs)
     st.markdown(f"**Are you sure you want to start Easy Apply for {count} jobs?**")
 
-    resume_options = list(st.session_state.get('resumes', {}).keys())
-    easy_resume_key = st.selectbox("Select Resume", resume_options)
-    easy_resume_path = st.session_state['resumes'].get(easy_resume_key, {}).get('file_path', '')
+    # Build mapping for auto-selection in the background
+    resume_mapping = { name: data.get('file_path') for name, data in st.session_state.get('resumes', {}).items() }
+    
+    # Use the first resume path as a system default if a job has no tag
+    default_path = list(resume_mapping.values())[0] if resume_mapping else ""
+
     easy_phone = st.text_input("Phone Number (optional)", value="+49 176 26983236")
 
     c1, c2 = st.columns(2)
@@ -326,9 +360,10 @@ def render_easy_apply_confirm(eligible_jobs, db):
         with st.spinner("Executing Batch Apply..."):
             mm.run_batch_apply_mission(
                 eligible_jobs=jobs_list,
-                resume_path=easy_resume_path,
+                resume_path=default_path, # Now used as a silent system default
                 phone_number=easy_phone,
-                status_box=status_box
+                status_box=status_box,
+                resume_mapping=resume_mapping
             )
 
         st.success("🎉 Batch Apply Complete!")
@@ -338,25 +373,25 @@ def render_easy_apply_confirm(eligible_jobs, db):
         st.rerun()
 
 @st.dialog("🧠 Confirm Batch Analysis")
-def render_batch_analysis_confirm(filtered_jobs, db):
+def render_batch_analysis_confirm(jobs_to_analyze_df, db):
     resume_options = list(st.session_state.get('resumes', {}).keys())
     if not resume_options:
         st.warning("Please upload a resume first.")
         return
         
-    selected_resume_key = st.selectbox("Analyze all un-analyzed jobs with Resume:", resume_options)
+    selected_resume_key = st.selectbox("Analyze selected jobs with Resume:", resume_options)
     
     # Calculate how many are missing analysis
     cache = db.load_cache()
     missing_jobs = []
     
-    for idx, row in filtered_jobs.iterrows():
+    for idx, row in jobs_to_analyze_df.iterrows():
         job_id = db.generate_job_id(row['Job Title'], row['Company'], selected_resume_key)
         # Include if not in cache OR if the cached result is an error
         if job_id not in cache or "error" in cache.get(job_id, {}):
             missing_jobs.append(row.to_dict())
             
-    st.info(f"Out of the current filtered results, **{len(missing_jobs)}** jobs are missing AI Analysis.")
+    st.info(f"Out of the **{len(jobs_to_analyze_df)}** selected jobs, **{len(missing_jobs)}** are missing AI Analysis.")
     
     if len(missing_jobs) == 0:
         st.success("All jobs are already processed!")
@@ -381,7 +416,8 @@ def render_batch_analysis_confirm(filtered_jobs, db):
                 context = f"Title: {job['Job Title']}\nCompany: {job['Company']}\nJD: {jd}"
 
                 crew = JobAnalysisCrew(context, resume_data['text'])
-                results = crew.run_analysis(use_browser=True)
+                # Pass close_after=False to keep session open during batch
+                results = crew.run_analysis(use_browser=True, close_after=False)
                 
                 if results and "error" not in results:
                     job_id = db.generate_job_id(job['Job Title'], job['Company'], selected_resume_key)
@@ -391,7 +427,13 @@ def render_batch_analysis_confirm(filtered_jobs, db):
                     st.toast(f"Skipped {job['Company']} (Error). Keep monitoring.", icon="⚠️")
                 
                 progress_bar.progress((i + 1) / len(missing_jobs))
-                time.sleep(2)  # Avoid instantly hammering ChatGPT
+                time.sleep(1)  # Brief pause between jobs
+            
+            # Close browser when batch is fully done (only if we processed something)
+            if missing_jobs:
+                from tools.browser_llm import BrowserLLM
+                bl = BrowserLLM(profile_name="llm_profile")
+                bl.close_tab()
                 
         st.success("Batch Analysis Complete!")
         if st.button("Finish & Refresh"):

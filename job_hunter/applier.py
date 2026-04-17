@@ -1227,6 +1227,11 @@ class JobApplier:
                     continue
         
         if not clicked:
+            # Check for external redirect buttons
+            full_text = self.driver.page_source.lower()
+            if any(k in full_text for k in ["arbeitgeber-website", "karriereseite", "visit website"]):
+                logger.info("[Xing] discovered this is an EXTERNAL link during apply.")
+                return False, "External application required. Skipped.", False
             return False, "Apply button not found.", False
         
         self.random_sleep(2, 3)
@@ -1298,10 +1303,28 @@ class JobApplier:
             logger.info(f"[Indeed] ⏭️ Job expired/closed (detected via {expired_ind}).")
             return False
 
-        # Look for buttons that say "Schnellbewerbung" or "Easily Apply"
+        # Prioritize checking for the "Apply with Indeed" or "Schnellbewerbung" button
         try:
-            page_source = self.driver.page_source.lower()
-            if any(phrase in page_source for phrase in ["easily apply", "einfach bewerben", "einfach bewerbung", "schnellbewerbung"]):
+            apply_selectors = [
+                "button.jobsearch-IndeedApplyButton-button",
+                "#indeedApplyButton",
+                "[data-testid='indeedApplyButton']",
+                ".jobsearch-IndeedApplyButton-contentWrapper button"
+            ]
+            for selector in apply_selectors:
+                try:
+                    btn = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if btn.is_displayed():
+                        btn_text = btn.text.lower()
+                        # Ignore external redirects
+                        if any(k in btn_text for k in ["employer", "external", "extern", "arbeitgeber", "website"]):
+                            return False
+                        return True
+                except: continue
+            
+            # Badge fallback
+            badges = self.driver.find_elements(By.CSS_SELECTOR, ".ialbl, [data-testid='indeedApply']")
+            if any(b.is_displayed() for b in badges):
                 return True
         except: pass
         return False
@@ -1383,6 +1406,12 @@ class JobApplier:
                 except: continue
 
         if not clicked:
+            # Final check: is it an external button?
+            full_text = self.driver.page_source.lower()
+            if any(k in full_text for k in ["website", "employer career", "karriereseite", "arbeitgeber-website"]):
+                logger.info("[Indeed] discovered this is an EXTERNAL link during apply.")
+                return False, "External application required. Skipped.", False
+                
             logger.error("[Indeed] ❌ Apply button NOT found.")
             save_debug_artifact(self.driver, "indeed_apply_failed")
             return False, "Indeed Apply button not found.", False

@@ -92,11 +92,22 @@ class LinkedInScraper(BaseScraper):
                         
                         is_easy = False
                         try:
-                            badge = card.find_element(By.CSS_SELECTOR, ".job-card-container__apply-method, .job-card-list__footer-item")
-                            if "Easy Apply" in badge.text or "Einfach bewerben" in badge.text:
-                                is_easy = True
+                            # Try multiple badge selectors
+                            badge_selectors = [
+                                ".job-card-container__apply-method",
+                                ".job-card-list__footer-item",
+                                "span.job-card-container__localized-apply-method"
+                            ]
+                            for b_sel in badge_selectors:
+                                try:
+                                    badge = card.find_element(By.CSS_SELECTOR, b_sel)
+                                    b_text = badge.text.lower()
+                                    if "easy apply" in b_text or "einfach bewerben" in b_text:
+                                        is_easy = True
+                                        break
+                                except: continue
                         except:
-                            if easy_apply: is_easy = True
+                            pass
 
                         if not any(j.link == link for j in results):
                             job_rec = JobRecord(
@@ -159,11 +170,25 @@ class LinkedInScraper(BaseScraper):
             "language": "en"
         }
 
-        # Easy Apply Check
+        # Stricter Easy Apply Check (Top Card Button)
         try:
-            page_source = self.driver.page_source.lower()
-            if "easy apply" in page_source or "einfach bewerben" in page_source:
-                details["is_easy_apply"] = True
+            # Look for the primary apply button in the top card
+            apply_btn_selectors = [
+                "button.jobs-apply-button",
+                ".jobs-unified-top-card button",
+                ".jobs-details-top-card button"
+            ]
+            for selector in apply_btn_selectors:
+                try:
+                    btn = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    btn_text = btn.text.lower()
+                    aria = (btn.get_attribute("aria-label") or "").lower()
+                    if any(k in btn_text or k in aria for k in ["easy apply", "einfach bewerben", "schnellbewerbung"]):
+                        # Final check to ensure it's not an external redirect button
+                        if not any(k in btn_text or k in aria for k in ["website", "external", "employer", "extern"]):
+                            details["is_easy_apply"] = True
+                            break
+                except: continue
         except: pass
 
         # Description

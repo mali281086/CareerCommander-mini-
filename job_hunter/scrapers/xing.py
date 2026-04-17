@@ -57,7 +57,13 @@ class XingScraper(BaseScraper):
                         
                         # Note: is_easy_apply check on cards is hard for Xing without opening
                         # but we can check for "Schnellbewerbung" text
-                        is_easy = "Schnellbewerbung" in card.text or "Easy Apply" in card.text
+                        # Check for specific "Schnellbewerbung" indicators
+                        is_easy = False
+                        b_text = card.text.lower()
+                        if any(k in b_text for k in ["schnellbewerbung", "easy apply", "einfach bewerben"]):
+                             # Ensure no external keywords in the SAME card
+                             if not any(k in b_text for k in ["arbeitgeber-website", "extern", "offsite"]):
+                                 is_easy = True
                         
                         if easy_apply and not is_easy:
                             continue
@@ -101,10 +107,26 @@ class XingScraper(BaseScraper):
             "company": ""
         }
 
-        # Easy Apply Check
-        page_source = self.driver.page_source.lower()
-        if "schnellbewerbung" in page_source or "easy apply" in page_source:
-            details["is_easy_apply"] = True
+        # Stricter Xing Easy Apply Check
+        try:
+            # Look for apply button and check its text context
+            apply_selectors = [
+                 "button[data-testid='apply-button']",
+                 "a[data-testid='apply-button']",
+                 "button[data-testid='nls-apply-button']",
+                 "button[class*='apply-button']"
+            ]
+            for selector in apply_selectors:
+                try:
+                    btn = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if btn.is_displayed():
+                        b_text = btn.text.lower()
+                        if any(k in b_text for k in ["bewerben", "apply", "schnell"]):
+                             if not any(k in b_text for k in ["arbeitgeber-website", "extern", "offsite", "external"]):
+                                 details["is_easy_apply"] = True
+                                 break
+                except: continue
+        except: pass
 
         # Company Extraction
         try:

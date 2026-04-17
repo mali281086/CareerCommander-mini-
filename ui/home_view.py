@@ -132,14 +132,29 @@ def render_home_view(db):
 
     m_col1, m_col2 = st.columns(2)
     with m_col2:
-        mode = st.radio("🚀 Execution Mode:", ["✨ Easy Apply Live (Scout + Apply Now)", "🔍 Deep Scrape (Scout + Detailed JD + AI Analysis)"], index=1, key="execution_mode")
+        st.markdown("### ⚙️ Search Mode")
+        mode_help = """
+        **Easy Apply Live**: Optimized for speed. Finds and applies immediately (No AI).
+        **Standard Scrape**: Fetches full Job Descriptions. You can then choose to run AI Analysis automatically or manually (Batch).
+        """
+        mode = st.radio("🚀 Execution Mode:", 
+                        ["✨ Easy Apply Live (Scout + Apply Now)", 
+                         "🔍 Standard Scrape (Fetch Jobs + Detailed JDs)"], 
+                        index=1, key="execution_mode", help=mode_help)
 
         st.markdown("---")
-        # Global AI Analysis Toggle
-        use_browser_analysis = st.toggle("🌐 Use Browser-based AI Analysis (ChatGPT/Gemini)", value=True)
+        # Global AI Analysis Toggle - Renamed to match user request
+        st.markdown("### 🧠 AI Analysis Strategy")
+        ai_strategy = st.radio("Choose how AI should analyze jobs:",
+                               ["🤖 Full Auto (Analyze every job immediately)",
+                                "🗳️ Batch Mode (Manual - I will select jobs later)"],
+                               index=0, key="ai_strategy_radio")
+        
+        use_browser_analysis = (ai_strategy.startswith("🤖"))
 
         if mode.startswith("🔍"):
-            deep_scrape_toggle = st.checkbox("Fetch Complete Details (integrated)", value=True)
+            st.caption("Deep Scrape is required to fetch the full text needed for AI Analysis.")
+            deep_scrape_toggle = st.checkbox("Fetch Complete Details (Integrated)", value=True, disabled=True)
         else:
             deep_scrape_toggle = False
 

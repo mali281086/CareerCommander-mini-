@@ -59,7 +59,7 @@ class JobAnalysisCrew:
             logger.info(f"DEBUG: JSON CLEAN FAILED: {e}")
             return {}
 
-    def run_analysis(self, components=None, use_browser=True):
+    def run_analysis(self, components=None, use_browser=True, close_after=True):
         """Runs the analysis using a browser-based LLM instead of API."""
         if components is None:
             components = ['intel', 'cover_letter', 'ats', 'resume']
@@ -145,12 +145,15 @@ Specific Instructions:
         response_text = browser_llm.ask(prompt)
 
         if response_text.startswith("ERROR:"):
-            browser_llm.close_tab()
+            if close_after:
+                browser_llm.close_tab()
             return {"error": response_text}
 
         results = self._clean_json(response_text)
         if not results:
             results = {"error": f"Failed to parse JSON from AI response. Raw response: {response_text[:200]}..."}
 
-        browser_llm.close_tab()
+        if close_after:
+            browser_llm.close_tab()
+            
         return results
