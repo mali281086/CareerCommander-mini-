@@ -160,21 +160,19 @@ def render_home_view(db):
 
     with m_col1:
         scrape_location = st.text_input("Target Locations (separate by ';')", value="Germany; Remote", help="e.g. Berlin; London; Remote")
-        scrape_limit = st.slider("Max jobs per keyword per platform", 5, 50, 15)
+        scrape_limit = st.number_input("Max jobs per keyword per platform", min_value=1, max_value=100, value=5, help="Specify how many jobs to fetch for each keyword on each selected platform.")
 
         all_platforms = ["LinkedIn", "Indeed", "Xing", "Stepstone", "ZipRecruiter"]
         is_easy_apply_live = mode.startswith("✨")
 
         if is_easy_apply_live:
-            available_platforms = ["LinkedIn"]
-            st.info("ℹ️ Easy Apply Live is restricted to LinkedIn only.")
+            available_platforms = ["LinkedIn", "Indeed", "Xing"]
             selected_platforms = st.multiselect(
                 "Target Platforms",
                 available_platforms,
-                default=available_platforms,
-                disabled=True,
+                default=["LinkedIn"],
                 key="platforms_live",
-                help="Platform selection is locked in Easy Apply Live mode."
+                help="Select platforms for live searching and applying."
             )
         else:
             available_platforms = all_platforms
@@ -235,6 +233,8 @@ def render_home_view(db):
 
             st.cache_data.clear()
             st.session_state['page'] = 'explorer'
+            # Mark the completion clearly to the user
+            st.toast("✅ Mission Complete!", icon="🚀")
             time.sleep(1)
             st.rerun()
 

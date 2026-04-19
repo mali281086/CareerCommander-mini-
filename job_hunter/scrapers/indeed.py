@@ -43,7 +43,7 @@ class IndeedScraper(BaseScraper):
             cards = self.driver.find_elements(By.CSS_SELECTOR, "div.job_seen_beacon") or \
                     self.driver.find_elements(By.CSS_SELECTOR, "td.resultContent")
             
-            self.log(f"Found {len(cards)} cards on page...")
+            self.log(f"Found {len(cards)} cards on Indeed. Processing up to {limit - len(results)} more to reach limit...")
             if not cards: break
             
             found_on_page = 0

@@ -52,6 +52,8 @@ class JobApplier:
         "nicht mehr aktiv",
         "expired",
         "abgelaufen",
+        "anzeige ist auf indeed abgelaufen",
+        "stellenanzeige ist auf indeed abgelaufen",
         "geschlossen",
         "unavailable",
         "nicht verfügbar",
@@ -131,6 +133,8 @@ class JobApplier:
 
     def handle_cookie_banners(self):
         """Attempts to click 'Accept' on common cookie banners to clear the view."""
+        self.dismiss_popups() # Clear other popups first
+        
         # Common "Accept" button selectors
         selectors = [
             "button[id='onetrust-accept-btn-handler']",
@@ -171,6 +175,46 @@ class JobApplier:
                     return True
             except: pass
         return False
+
+    def dismiss_popups(self):
+        """Dismiss common popups like Google Sign-in that block the UI."""
+        try:
+            # 1. Google Sign-in (Indeed/LinkedIn/etc)
+            # This often lives in an iframe with id 'google-one-tap-iframe'
+            google_iframe = self.driver.find_elements(By.CSS_SELECTOR, "iframe[id*='google-one-tap'], iframe[src*='google.com'][src*='select-account']")
+            if google_iframe:
+                # We can't always 'close' it easily, but we can try to find the close button inside or just hide the iframe via JS
+                self.driver.execute_script("""
+                    var iframes = document.querySelectorAll("iframe[id*='google-one-tap'], iframe[src*='google.com'][src*='select-account']");
+                    for (var i = 0; i < iframes.length; i++) {
+                        iframes[i].style.display = 'none';
+                        iframes[i].remove();
+                    }
+                    var overlays = document.querySelectorAll(".google-one-tap-modal-overlay");
+                    for (var i = 0; i < overlays.length; i++) {
+                        overlays[i].remove();
+                    }
+                """)
+                logger.debug("[Applier] 🧹 Google Sign-in popup dismissed via JS injection.")
+
+            # 2. General close buttons (modal 'X' icons)
+            close_selectors = [
+                "button[aria-label*='Close']",
+                "button[aria-label*='Schließen']",
+                "button.icl-CloseButton", # Indeed
+                ".modal-close",
+                ".dismiss-button"
+            ]
+            for sel in close_selectors:
+                try:
+                    btns = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                    for btn in btns:
+                        if btn.is_displayed():
+                            btn.click()
+                            logger.info(f"[Applier] 🗳️ Dismissed popup via selector: {sel}")
+                except: pass
+        except Exception as e:
+            logger.debug(f"[Applier] dismiss_popups error: {e}")
     
     # ==========================================
     # DETECTION METHODS
@@ -684,7 +728,7 @@ class JobApplier:
                     # Find input or combobox
                     input_el = None
                     try:
-                        input_el = group.find_element(By.CSS_SELECTOR, "input[type='text'], input[type='number'], input[type='tel'], input:not([type='file']):not([type='radio']):not([type='checkbox']), [role='combobox'] input")
+                        input_el = group.find_element(By.CSS_SELECTOR, "input[type='text'], input[type='number'], input[type='tel'], input:not([type='file']):not([type='radio']):not([type='checkbox']):not([type='hidden']), [role='combobox'] input:not([type='hidden'])")
                     except:
                         try: input_el = group.find_element(By.TAG_NAME, "textarea")
                         except: pass
@@ -717,48 +761,102 @@ class JobApplier:
                             input_el.send_keys(Keys.CONTROL + "a")
                             input_el.send_keys(Keys.BACKSPACE)
 
-                        type_human_like(input_el, answer)
-                        logger.info(f"[LinkedIn] Answered '{label_text}' → '{answer}'")
-
                         # Handle LinkedIn's typeahead/combobox (e.g. City/Location)
-                        # These fields require selecting an option from the dropdown even if text is correct
-                        try:
-                            # Short sleep to let dropdown appear
-                            self.random_sleep(0.5, 1.0)
+                        # These fields require selecting an option from the dropdown
+                        role = input_el.get_attribute("role") or ""
+                        autocomplete = input_el.get_attribute("aria-autocomplete") or ""
+                        is_typeahead = role == "combobox" or autocomplete == "list" or \
+                                       "city" in label_text.lower() or "location" in label_text.lower() or \
+                                       "standort" in label_text.lower() or "ort" in label_text.lower()
 
-                            # Check if input is likely a combobox
-                            role = input_el.get_attribute("role")
-                            autocomplete = input_el.get_attribute("aria-autocomplete")
-                            is_typeahead = role == "combobox" or autocomplete == "list" or \
-                                           "city" in label_text.lower() or "location" in label_text.lower()
-
-                            if is_typeahead:
-                                # Try multiple selectors for the first option in the dropdown
+                        if is_typeahead:
+                            # For typeahead: type only the CITY part (before comma)
+                            # e.g. "Berlin, Germany" -> type "Berlin", then pick from dropdown
+                            search_term = answer.split(",")[0].strip() if "," in answer else answer
+                            
+                            # Clear field completely
+                            input_el.click()
+                            self.random_sleep(0.3, 0.5)
+                            input_el.send_keys(Keys.CONTROL + "a")
+                            input_el.send_keys(Keys.DELETE)
+                            self.random_sleep(0.3, 0.5)
+                            
+                            # Type only the city name to trigger dropdown
+                            type_human_like(input_el, search_term)
+                            logger.info(f"[LinkedIn] Typeahead: typed '{search_term}' for '{label_text}' (full answer: '{answer}')")
+                            
+                            # Wait for dropdown to appear
+                            self.random_sleep(1.5, 2.5)
+                            
+                            # Try to find and click the best matching dropdown option
+                            found_option = False
+                            for attempt in range(4):
                                 suggestion_selectors = [
+                                    "[role='option']",
+                                    ".basic-typeahead__selectable",
                                     ".artdeco-typeahead__result",
                                     ".artdeco-typeahead__results-list li",
-                                    "[role='option']",
-                                    ".basic-typeahead__result"
+                                    ".basic-typeahead__result",
+                                    "li.artdeco-typeahead__result",
+                                    ".fb-typeahead__result",
+                                    "div[role='listbox'] div[role='option']"
                                 ]
-
+                                
                                 for sug_sel in suggestion_selectors:
                                     try:
-                                        # Use driver.find_elements to avoid waiting too long if not present
                                         options = self.driver.find_elements(By.CSS_SELECTOR, sug_sel)
-                                        found = False
-                                        for opt in options:
-                                            if opt.is_displayed():
-                                                # Try clicking directly, then with JS
-                                                try: opt.click()
-                                                except: self.driver.execute_script("arguments[0].click();", opt)
-                                                logger.info(f"[LinkedIn] ✅ Selected dropdown option for '{label_text}'")
-                                                found = True
+                                        visible_options = [o for o in options if o.is_displayed()]
+                                        
+                                        if not visible_options:
+                                            continue
+                                        
+                                        # First try to find exact match containing the full answer
+                                        best_match = None
+                                        for opt in visible_options:
+                                            opt_text = opt.text.strip().lower()
+                                            if answer.lower() in opt_text or search_term.lower() in opt_text:
+                                                best_match = opt
                                                 break
-                                        if found: break
-                                    except:
-                                        continue
-                        except:
-                            pass
+                                        
+                                        # If no text match, just take the first visible option
+                                        if not best_match:
+                                            best_match = visible_options[0]
+                                        
+                                        try: best_match.click()
+                                        except: self.driver.execute_script("arguments[0].click();", best_match)
+                                        logger.info(f"[LinkedIn] ✅ Selected typeahead option '{best_match.text.strip()}' for '{label_text}' on attempt {attempt+1}")
+                                        found_option = True
+                                        break
+                                    except: continue
+                                
+                                if found_option:
+                                    break
+                                
+                                # Retry strategies
+                                if attempt == 0:
+                                    # Try pressing Down arrow + Enter
+                                    input_el.send_keys(Keys.ARROW_DOWN)
+                                    self.random_sleep(0.5, 0.8)
+                                elif attempt == 1:
+                                    # Clear and retype with slight variation
+                                    input_el.send_keys(Keys.CONTROL + "a")
+                                    input_el.send_keys(Keys.DELETE)
+                                    self.random_sleep(0.5, 0.8)
+                                    type_human_like(input_el, search_term)
+                                    self.random_sleep(1.5, 2.0)
+                                elif attempt == 2:
+                                    # Last resort: try pressing Enter on whatever is highlighted
+                                    input_el.send_keys(Keys.RETURN)
+                                    self.random_sleep(0.5, 0.8)
+                            
+                            if not found_option:
+                                logger.info(f"[LinkedIn] ⚠️ Could not select typeahead option for '{label_text}'. Pressing Enter as fallback.")
+                                input_el.send_keys(Keys.RETURN)
+                        else:
+                            # Normal (non-typeahead) field: type the full answer
+                            type_human_like(input_el, answer)
+                        
+                        logger.info(f"[LinkedIn] Answered '{label_text}' → '{answer}'")
                     else:
                         # Handle common questions with safe defaults
                         label_lower = label_text.lower()
@@ -1236,51 +1334,74 @@ class JobApplier:
         
         self.random_sleep(2, 3)
         
-        # 2. Handle Application Form
-        # Upload Resume if prompted
-        if self.resume_path:
-            file_input = self.find_element_safe("input[type='file']", timeout=3)
-            if file_input:
-                try:
-                    file_input.send_keys(self.resume_path)
-                    logger.info("[Xing] Uploaded resume.")
-                    self.random_sleep(1, 2)
-                except Exception as e:
-                    logger.info(f"[Xing] Resume upload failed: {e}")
-        
-        # 3. Submit
-        submit_selectors = [
-            "button[type='submit']",
-            "button[data-testid='submit-application']",
-            "button.submit-button",
-            "button[data-testid='nls-submit-button']",
-            "button[class*='SubmitButton']",
-            "//button[contains(translate(., 'ABSENDEN', 'absenden'), 'absenden')]",
-            "//button[contains(translate(., 'BESTÄTIGEN', 'bestätigen'), 'bestätigen')]",
-            "//button[contains(translate(., 'SUBMIT', 'submit'), 'submit')]",
-            "//button[contains(translate(., 'CONFIRM', 'confirm'), 'confirm')]",
-            "//button[contains(., 'Send application')]",
-            "//button[contains(., 'Bewerbung absenden')]",
-            "//button[contains(., 'Antrag stellen')]"
-        ]
-        
-        for selector in submit_selectors:
-            try:
-                if selector.startswith("//"):
-                    btn = self.driver.find_element(By.XPATH, selector)
-                    btn.click()
-                    clicked = True
-                else:
-                    clicked = self.click_element(selector, timeout=5)
+        # 2. Handle Application Form (Multi-step loop)
+        max_steps = 15
+        for step in range(max_steps):
+            logger.info(f"[Xing] Processing application step {step+1}...")
+            self.random_sleep(2, 4)
 
-                if clicked:
-                    self.random_sleep(2, 3)
+            # Check for success indicators
+            source = self.driver.page_source.lower()
+            if any(k in source for k in ["abgesendet", "thank you", "vielen dank", "erfolgreich", "success", "application sent"]):
+                logger.info("[Xing] ✅ Application success detected!")
+                self.applied_count += 1
+                return True, "Applied successfully.", True
+
+            # Handle Resume Upload (if input present)
+            if self.resume_path:
+                try:
+                    file_inputs = self.driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
+                    for finp in file_inputs:
+                        if finp.is_displayed():
+                            # Only upload if not already uploaded (Xing usually shows filename if uploaded)
+                            finp.send_keys(self.resume_path)
+                            logger.info("[Xing] Uploaded resume.")
+                            self.random_sleep(2, 3)
+                except: pass
+
+            # Click Next / Submit / Continue
+            action_selectors = [
+                "button[type='submit']",
+                "button[data-testid='submit-application']",
+                "button[data-testid='nls-submit-button']",
+                "button[class*='SubmitButton']",
+                "button[class*='continue-button']",
+                "button[class*='apply-button']",
+                "//button[contains(., 'Next')]",
+                "//button[contains(., 'Weiter')]",
+                "//button[contains(., 'Submit')]",
+                "//button[contains(., 'Absenden')]",
+                "//button[contains(., 'Senden')]",
+                "//button[contains(., 'Bestätigen')]",
+                "//button[contains(., 'Bewerbung absenden')]"
+            ]
+
+            clicked_step = False
+            for selector in action_selectors:
+                try:
+                    if selector.startswith("//"):
+                        btn = self.driver.find_element(By.XPATH, selector)
+                    else:
+                        btn = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    
+                    if btn.is_displayed():
+                        txt = btn.text.strip()
+                        logger.info(f"[Xing] Step {step+1}: Clicking '{txt}'")
+                        try: btn.click()
+                        except: self.driver.execute_script("arguments[0].click();", btn)
+                        clicked_step = True
+                        break
+                except: continue
+            
+            if not clicked_step:
+                logger.info(f"[Xing] No active button found in step {step+1}. Checking for success one last time...")
+                self.random_sleep(2, 3)
+                if any(k in self.driver.page_source.lower() for k in ["abgesendet", "thank you", "success"]):
                     self.applied_count += 1
-                    return True, "Application submitted successfully!", True
-            except:
-                continue
-        
-        return False, "Submit button not found. Check manually.", True
+                    return True, "Applied (detected late).", True
+                break
+
+        return False, "Failed to complete Xing application flow.", True
     
     # ==========================================
     # INDEED EASY APPLY (SCHNELLBEWERBUNG)
@@ -1327,6 +1448,49 @@ class JobApplier:
             if any(b.is_displayed() for b in badges):
                 return True
         except: pass
+        return False
+
+    def _handle_indeed_captcha(self):
+        """Detect and attempt to click 'I am not a robot' checkbox on Indeed."""
+        try:
+            # 1. Check for reCAPTCHA iframes
+            iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+            for iframe in iframes:
+                try:
+                    src = (iframe.get_attribute("src") or "").lower()
+                    if "google.com/recaptcha" in src:
+                        self.driver.switch_to.frame(iframe)
+                        try:
+                            # Standard reCAPTCHA checkbox ID
+                            checkbox = self.driver.find_element(By.ID, "recaptcha-anchor")
+                            if checkbox.is_displayed():
+                                logger.warning("[Indeed] 🤖 reCAPTCHA detected! Attempting to click...")
+                                self.driver.execute_script("arguments[0].click();", checkbox)
+                                self.random_sleep(2, 4)
+                                self.driver.switch_to.default_content()
+                                return True
+                        except: pass
+                        self.driver.switch_to.default_content()
+                except: continue
+
+            # 2. Check for text-based checkbox (non-iframe or obscured)
+            page_txt = self.driver.page_source.lower()
+            if "ich bin kein roboter" in page_txt or "not a robot" in page_txt:
+                # Look for checkboxes or labels
+                elements = self.driver.find_elements(By.CSS_SELECTOR, "label, input[type='checkbox'], span")
+                for el in elements:
+                    try:
+                        if not el.is_displayed(): continue
+                        txt = el.text.lower()
+                        if "ich bin kein roboter" in txt or "not a robot" in txt:
+                            logger.warning(f"[Indeed] 🤖 Verification checkbox found: '{txt}'. Clicking...")
+                            try: el.click()
+                            except: self.driver.execute_script("arguments[0].click();", el)
+                            self.random_sleep(2, 3)
+                            return True
+                    except: continue
+        except Exception as e:
+            logger.debug(f"[Indeed] CAPTCHA helper quiet error: {e}")
         return False
 
     def apply_indeed(self, job_url, skip_detection=False):
@@ -1446,13 +1610,36 @@ class JobApplier:
             logger.info(f"[Indeed] processing step {step+1}...")
             self.random_sleep(2, 3)
 
-            # Check for success indicators
+            # A. CAPTCHA Handling
+            if self._handle_indeed_captcha():
+                logger.info("[Indeed] Handled/Clicked CAPTCHA. Waiting to see if button enables...")
+                self.random_sleep(3, 5)
+
+            # B. Check for success indicators
             page_source_lower = self.driver.page_source.lower()
             success_indicators = [
                 "bewerbung ist unterwegs", "application submitted", 
-                "gelungen", "great, you're done", "application sent"
+                "gelungen", "great, you're done", "application sent",
+                "application has been sent", "votre candidature a été envoyée",
+                "thank you for applying", "vielen dank für ihre bewerbung",
+                "bewerbung wurde gesendet"
             ]
-            if any(s in page_source_lower for s in success_indicators):
+            
+            # Stricter success: Indicator present AND 'Bewerbung absenden' button NOT visible
+            has_indicator = any(s in page_source_lower for s in success_indicators)
+            submit_btn_present = False
+            try:
+                # Check for various forms of the submit button text
+                check_btns = self.driver.find_elements(By.TAG_NAME, "button")
+                for b in check_btns:
+                    if b.is_displayed():
+                        btxt = b.text.lower()
+                        if "bewerbung absenden" in btxt or "submit application" in btxt:
+                            submit_btn_present = True
+                            break
+            except: pass
+
+            if has_indicator and not submit_btn_present:
                 logger.info("[Indeed] ✓ Application submitted successfully!")
                 self.applied_count += 1
                 try: self.driver.switch_to.default_content()
@@ -1523,7 +1710,7 @@ class JobApplier:
             # Also text based search for buttons
             possible_btns.extend(self.driver.find_elements(By.TAG_NAME, "button"))
             
-            target_actions = ["continue", "weieter", "weiter", "review", "überprüfen", "submit", "senden", "apply", "bewerbung absenden"]
+            target_actions = ["continue", "weiter", "review", "überprüfen", "submit", "senden", "apply", "bewerbung absenden", "zur übersicht"]
             
             for btn in possible_btns:
                 try:
@@ -1556,7 +1743,21 @@ class JobApplier:
         try: self.driver.switch_to.default_content()
         except: pass
         
-        return False, "Stopped loop without confirmed success.", True
+        # FINAL ATTEMPT Check for Submit if loop ended
+        logger.info("[Indeed] Step loop ended. Checking for one final Submit button...")
+        self.random_sleep(2, 3)
+        final_btns = self.driver.find_elements(By.TAG_NAME, "button")
+        for btn in final_btns:
+            try:
+                txt = btn.text.lower()
+                if any(t in txt for t in ["submit", "senden", "finaliser", "apply"]):
+                    if btn.is_displayed():
+                        btn.click()
+                        self.random_sleep(3, 5)
+                        return True, "Applied (Final Submission attempt)!", True
+            except: pass
+
+        return False, "Stopped loop without confirmed success. Please check the browser.", True
 
     # ==========================================
     # MAIN APPLY DISPATCHER
@@ -1578,6 +1779,13 @@ class JobApplier:
             return self.apply_indeed(job_url, skip_detection)
         else:
             return False, f"Platform '{platform}' not supported for auto-apply.", False
+
+    def stealth_cooldown(self):
+        """Wait for a stealthy amount of time between applications (approx 30s)."""
+        sec = 30 + (self.random_sleep(0, 5, True) - 2.5) # Roughly 27-32s
+        logger.info(f"🛡️ Stealth Cooldown: Waiting {sec:.1f}s before next application...")
+        import time
+        time.sleep(sec)
     
     # ==========================================
     # LIVE APPLY MODE - LinkedIn
@@ -1666,6 +1874,7 @@ class JobApplier:
             # Use index-based iteration to avoid stale elements
             card_index = 0
             max_cards_per_page = 50
+            skipped_on_page = 0  # Track how many we skipped on this page
             
             while applied_count < target_count and card_index < max_cards_per_page:
                 jitter_mouse(self.driver)
@@ -1680,7 +1889,7 @@ class JobApplier:
                     log(f"Found {len(job_cards)} job cards")
                 
                 if card_index >= len(job_cards):
-                    break  # No more cards on this page
+                    break  # No more cards on this page → will try pagination
                 
                 card = job_cards[card_index]
                 card_index += 1
@@ -1692,7 +1901,10 @@ class JobApplier:
                         card_text = card.text.lower()
                         is_applied, indicator = self._is_applied_check(card_text)
                         if is_applied:
-                            log(f"   ⏭️ Already applied (via card text: {indicator})")
+                            skipped_on_page += 1
+                            # Only log every 5th skip to reduce noise
+                            if skipped_on_page <= 3 or skipped_on_page % 5 == 0:
+                                log(f"   ⏭️ Already applied (via card text: {indicator}) [{skipped_on_page} skipped on this page]")
                             results["skipped"].append({"title": "Unknown", "company": "Unknown", "reason": f"Already applied ({indicator})"})
                             continue
                     except:
@@ -1921,7 +2133,18 @@ class JobApplier:
                         
                         # Save to applied jobs with timestamp
                         jid = f"{title}-{company}"
+                        # Try to get clean Job URL from current URL (extracting jobId)
                         job_url = self.driver.current_url
+                        try:
+                            if "currentJobId=" in job_url:
+                                import urllib.parse
+                                parsed = urllib.parse.urlparse(job_url)
+                                params = urllib.parse.parse_qs(parsed.query)
+                                job_id = params.get('currentJobId', [None])[0]
+                                if job_id:
+                                    job_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
+                        except: pass
+
                         from datetime import datetime
                         job_data = {
                             "Job Title": title,
@@ -1935,8 +2158,8 @@ class JobApplier:
                         self.db.save_applied(jid, job_data, {"auto_applied": True})
                         log(f"   💾 Saved to database: {jid}")
                         
-                        # After successful application, wait a bit for DOM to stabilize
-                        self.random_sleep(2, 3)
+                        # Stealth 30s Cooldown
+                        self.stealth_cooldown()
                     else:
                         log(f"   ❌ Failed to complete application")
                         results["errors"].append({"title": title, "company": company, "error": "Modal failed"})
@@ -1951,16 +2174,46 @@ class JobApplier:
             
             # Go to next page if needed
             if applied_count < target_count:
-                try:
-                    next_btn = self.driver.find_element(By.CSS_SELECTOR, 
-                        "button[aria-label='Weiter'], button[aria-label='Next'], li.artdeco-pagination__indicator--number button")
-                    next_btn.click()
-                    log("➡️ Moving to next page...")
+                log(f"📊 Page {page} summary: {skipped_on_page} already-applied skipped, looking for next page...")
+                paginated = False
+                # Try multiple pagination selectors
+                pagination_selectors = [
+                    "button[aria-label='Weiter']",
+                    "button[aria-label='Next']",
+                    "button[aria-label='View next page']",
+                    "button[aria-label='Nächste Seite anzeigen']",
+                    ".artdeco-pagination__button--next",
+                ]
+                for p_sel in pagination_selectors:
+                    try:
+                        next_btn = self.driver.find_element(By.CSS_SELECTOR, p_sel)
+                        if next_btn.is_displayed() and next_btn.is_enabled():
+                            self.driver.execute_script("arguments[0].click();", next_btn)
+                            paginated = True
+                            log(f"➡️ Moving to next page (via {p_sel})...")
+                            break
+                    except: continue
+                
+                # Fallback: try clicking next numbered page
+                if not paginated:
+                    try:
+                        page_btns = self.driver.find_elements(By.CSS_SELECTOR, "li.artdeco-pagination__indicator--number button")
+                        for pb in page_btns:
+                            try:
+                                page_num_text = pb.text.strip()
+                                if page_num_text.isdigit() and int(page_num_text) > page:
+                                    pb.click()
+                                    paginated = True
+                                    log(f"➡️ Moving to page {page_num_text}...")
+                                    break
+                            except: continue
+                    except: pass
+                
+                if paginated:
                     self.random_sleep(3, 4)
-                    # Re-verify filter on new page to be sure
                     self._ensure_linkedin_easy_apply_filter()
-                except:
-                    log("📄 No more pages available")
+                else:
+                    log("📄 No more pages available. Ending search.")
                     break
         
         log(f"🏁 Complete! Applied: {applied_count} | Checked: {results['checked']} | Skipped: {len(results['skipped'])}")
@@ -1969,12 +2222,17 @@ class JobApplier:
         results["unknown_questions"] = self.session_unknown_questions
         
         return results
+
+
+
+
     
-    def _recursive_iframe_search(self, keywords, depth=0, max_depth=3):
+    def _recursive_iframe_search(self, keywords, forbidden=None, depth=0, max_depth=3):
         """
         Recursively search for a button with keywords in visible text.
         Returns the WebElement if found, else None.
         """
+        if forbidden is None: forbidden = []
         if depth > max_depth:
             return None
 
@@ -1990,8 +2248,9 @@ class JobApplier:
                             continue
                         
                         if any(k in txt for k in keywords):
-                            logger.info(f"[LinkedIn] Recursive Found: '{b.text}' in Depth {depth}")
-                            return b
+                            if not any(f in txt for f in forbidden):
+                                logger.info(f"[LinkedIn] Recursive Found: '{b.text}' in Depth {depth}")
+                                return b
                 except: pass
         except: pass
 
@@ -2001,7 +2260,7 @@ class JobApplier:
             for i, frame in enumerate(frames):
                 try:
                     self.driver.switch_to.frame(frame)
-                    found = self._recursive_iframe_search(keywords, depth + 1, max_depth)
+                    found = self._recursive_iframe_search(keywords, forbidden, depth + 1, max_depth)
                     if found:
                         return found
                     self.driver.switch_to.parent_frame()
@@ -2051,26 +2310,36 @@ class JobApplier:
             attempts += 1
             self.random_sleep(2.0, 3.5)
             
-            # 1. Check for success indicators FIRST
-            try:
-                success_keywords = [
-                    "bewerbung gesendet", "application sent", "successfully submitted",
-                    "erfolgreich", "bewerbung wurde gesendet", "votre candidature a été envoyée",
-                    "candidatura inviata", "candidatura enviada"
-                ]
-                page_text = self.driver.page_source.lower()
-                if any(kw in page_text for kw in success_keywords) or "application was sent" in page_text or "sent to" in page_text:
-                    logger.info("[LinkedIn] ✅ Application success detected via page text.")
-                    try:
-                        # Try to find "Done" or "Dismiss"
-                        done_btns = self.driver.find_elements(By.CSS_SELECTOR, "button[aria-label*='Done'], button.artdeco-button--primary, button[aria-label*='Dismiss'], .artdeco-modal__dismiss")
-                        for db in done_btns:
-                            if any(k in db.text.lower() for k in ['done', 'fertig', 'close', 'schließen']) or "dismiss" in db.get_attribute("aria-label").lower():
-                                self.driver.execute_script("arguments[0].click();", db)
-                                break
-                    except: pass
-                    return True
-            except: pass
+            # 1. Check for success indicators FIRST (only after submit was clicked)
+            if submitted_clicked:
+                try:
+                    success_keywords = [
+                        "bewerbung gesendet", "application sent", "successfully submitted",
+                        "bewerbung wurde gesendet", "votre candidature a été envoyée",
+                        "candidatura inviata", "candidatura enviada",
+                        "your application was sent", "ihre bewerbung wurde gesendet",
+                        "application was sent to", "bewerbung wurde gesendet an",
+                        "deine bewerbung wurde gesendet",
+                        "application submitted", "bewerbung eingereicht"
+                    ]
+                    page_text = self.driver.page_source.lower()
+                    if any(kw in page_text for kw in success_keywords):
+                        logger.info("[LinkedIn] ✅ Application success detected via page text.")
+                        # Try to dismiss the success modal
+                        try:
+                            done_btns = self.driver.find_elements(By.CSS_SELECTOR, "button[aria-label*='Done'], button.artdeco-button--primary, button[aria-label*='Dismiss'], .artdeco-modal__dismiss")
+                            for db in done_btns:
+                                try:
+                                    btn_text = db.text.lower()
+                                    aria = (db.get_attribute("aria-label") or "").lower()
+                                    if any(k in btn_text or k in aria for k in ['done', 'fertig', 'close', 'schließen', 'dismiss']):
+                                        self.driver.execute_script("arguments[0].click();", db)
+                                        logger.info(f"[LinkedIn] Dismissed success modal via: '{db.text}'")
+                                        break
+                                except: continue
+                        except: pass
+                        return True
+                except: pass
 
             # 2. Find PRIMARY BUTTONS (Generic class, any tag)
             # Use .artdeco-button--primary instead of button.artdeco-button--primary
@@ -2097,7 +2366,37 @@ class JobApplier:
                     potential_buttons = visible_btns
             except: pass
             
-            # B. Iframe Scan (if no buttons in main doc)
+            # A. Check Success FIRST at the start of every loop
+            # IMPORTANT: Only check success after we've actually clicked submit at least once
+            # to avoid false positives from job description text
+            if submitted_clicked:
+                page_text = self.driver.page_source.lower()
+                post_submit_success = [
+                    "your application was sent", "application was sent",
+                    "bewerbung wurde gesendet", "bewerbung gesendet",
+                    "deine bewerbung wurde gesendet",
+                    "you've applied for", "you successfully applied",
+                    "thank you for applying", "vielen dank für ihre bewerbung",
+                    "application submitted", "bewerbung eingereicht",
+                    "bewerbung wurde an", "ihre bewerbung wurde",
+                    "candidature a été envoyée", "candidatura inviata"
+                ]
+                
+                if any(sk in page_text for sk in post_submit_success):
+                    logger.info("[LinkedIn] ✅ Application success detected via page text scan (post-submit).")
+                    try: 
+                        done_btns = self.driver.find_elements(By.CSS_SELECTOR, "button.artdeco-button--primary, button[aria-label*='Dismiss']")
+                        for db in done_btns:
+                            if db.is_displayed() and any(k in db.text.lower() for k in ['done', 'close', 'fertig', 'schließen']):
+                                db.click()
+                                break
+                    except: pass
+                    return True
+
+            # B. Button Discovery
+            potential_buttons = self.driver.find_elements(By.CSS_SELECTOR, ".artdeco-button--primary, .jp-button-apply, .jobs-apply-button")
+            
+            # C. Iframe Scan (if no buttons in main doc)
             if not potential_buttons:
                 try:
                     iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
@@ -2122,9 +2421,11 @@ class JobApplier:
             if not potential_buttons:
                 logger.info(f"[LinkedIn] No visible primary buttons found in Main or Iframes. Attempt {attempts}/{max_attempts}")
                 
-                # Dump logic moved to end of loop to cover all failure cases
-                if attempts > 10:
-                    logger.info("[LinkedIn] ⚠️ No buttons found for 10+ steps and no success msg. Assuming failed/closed.")
+                if attempts > 8:
+                    # Final success check just in case it popped up late
+                    if any(sk in self.driver.page_source.lower() for sk in success_keywords):
+                        return True
+                    logger.info("[LinkedIn] ⚠️ No buttons found for 8+ steps and no success msg. Assuming failed/closed.")
                     return False
                 continue
             
@@ -2132,26 +2433,46 @@ class JobApplier:
             action_btn = None
             target_keywords = ['next', 'weiter', 'submit', 'senden', 'review', 'überprüfen', 'continue', 'suivant', 'absenden', 'bewerben', 'einreichen', 'done', 'fertig']
             
+            # BLACKLIST: Never click these during the application process
+            forbidden_keywords = ['discard', 'cancel', 'abbrechen', 'verwerfen', 'annuler', 'dismiss']
+            
             # If we already clicked submit, we should look for Close/Dismiss buttons as signs of success
             if submitted_clicked:
                 target_keywords.extend(['close', 'schließen', 'dismiss'])
             
-            # First pass: look for exact keywords
-            for b in potential_buttons:
-                txt = b.text.lower().strip()
-                if any(k in txt for k in target_keywords):
-                    action_btn = b
-                    logger.info(f"[LinkedIn] Matched Action Button: '{txt}'")
-                    break
+            # Check for the specific "Save this application?" popup
+            try:
+                popup_text = self.driver.page_source.lower()
+                if "save this application?" in popup_text or "bewerbung speichern?" in popup_text:
+                    logger.info("[LinkedIn] 🛡️ 'Save progress' popup detected! Searching for 'Save' button...")
+                    # Update target specifically for this popup
+                    save_btns = self.driver.find_elements(By.CSS_SELECTOR, "button.artdeco-button--primary, .artdeco-modal__confirm-dialog-btn")
+                    for s_btn in save_btns:
+                        if s_btn.is_displayed() and any(k in s_btn.text.lower() for k in ['save', 'speichern', 'garder']):
+                            action_btn = s_btn
+                            logger.info(f"[LinkedIn] ✅ Matched 'Save' button in popup: '{s_btn.text}'")
+                            break
+            except: pass
+
+            if not action_btn:
+                # First pass: look for exact keywords, ensuring they aren't forbidden
+                for b in potential_buttons:
+                    txt = b.text.lower().strip()
+                    if any(k in txt for k in target_keywords):
+                        if not any(f in txt for f in forbidden_keywords):
+                            action_btn = b
+                            logger.info(f"[LinkedIn] Matched Action Button: '{txt}'")
+                            break
             
-            # Fallback: take any primary button that is NOT 'Easy Apply'
+            # Fallback: take any primary button that is NOT 'Easy Apply' or forbidden
             if not action_btn:
                 for b in potential_buttons:
                     txt = b.text.lower()
                     if "easy apply" not in txt and "einfach bewerben" not in txt:
-                        action_btn = b
-                        logger.info(f"[LinkedIn] Matched Fallback Button: '{txt}'")
-                        break
+                        if not any(f in txt for f in forbidden_keywords):
+                            action_btn = b
+                            logger.info(f"[LinkedIn] Matched Fallback Button: '{txt}'")
+                            break
             
             # STRATEGY C: Search ALL buttons by text (if Primary Class failed)
             if not action_btn:
@@ -2162,9 +2483,10 @@ class JobApplier:
                         if b.is_displayed():
                             txt = b.text.lower().strip()
                             if any(k in txt for k in target_keywords):
-                                action_btn = b
-                                logger.info(f"[LinkedIn] Strategy C Matched: '{b.text}' (Tag: {b.tag_name})")
-                                break
+                                if not any(f in txt for f in forbidden_keywords):
+                                    action_btn = b
+                                    logger.info(f"[LinkedIn] Strategy C Matched: '{b.text}' (Tag: {b.tag_name})")
+                                    break
                 except Exception as e:
                     logger.info(f"[LinkedIn] Strategy C failed: {e}")
 
@@ -2177,7 +2499,7 @@ class JobApplier:
                 try: self._linkedin_fill_fields()
                 except: pass
                 
-                recurse_btn = self._recursive_iframe_search(target_keywords, depth=0, max_depth=3)
+                recurse_btn = self._recursive_iframe_search(target_keywords, forbidden=forbidden_keywords, depth=0, max_depth=3)
                 if recurse_btn:
                     logger.info(f"[LinkedIn] Strategy D Success: Found '{recurse_btn.text}'")
                     try: recurse_btn.click()
@@ -2427,13 +2749,14 @@ class JobApplier:
             
             # Find job cards
             try:
-                # Expanded selectors for Xing job cards
+                # Expanded selectors for Xing job cards based on recent inspection
                 card_selectors = [
+                    "a[class*='CardLink-sc']",
+                    "div[data-testid='job-card']",
                     "article[data-testid='job-posting-card']",
                     ".job-posting-card",
                     "a[data-testid='job-search-result']",
-                    "article[class*='JobPostingCard']",
-                    "div[data-testid='job-search-result-container'] article"
+                    "article[class*='JobPostingCard']"
                 ]
                 job_cards = []
                 for sel in card_selectors:
@@ -2441,7 +2764,7 @@ class JobApplier:
                     if found:
                         job_cards = found
                         break
-                log(f"Found {len(job_cards)} job cards")
+                log(f"Found {len(job_cards)} job cards via '{sel}'")
             except:
                 job_cards = []
             

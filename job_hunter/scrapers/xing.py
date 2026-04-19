@@ -38,7 +38,7 @@ class XingScraper(BaseScraper):
             cards = self.driver.find_elements(By.CSS_SELECTOR, "article[data-testid='job-posting-card']") or \
                     self.driver.find_elements(By.CSS_SELECTOR, ".job-posting-card")
             
-            self.log(f"Found {len(cards)} cards on page {page}...")
+            self.log(f"Found {len(cards)} cards on Xing. Processing up to {limit - len(results)} more to reach limit...")
 
             for card in cards:
                 if len(results) >= limit: break

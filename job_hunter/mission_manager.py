@@ -18,23 +18,24 @@ class MissionManager:
 
     def _start_mission(self, mission_type, total_steps=0, config_context=None):
         self.progress.reset()
-        self.progress.update(
-            mission_type=mission_type,
-            is_active=True,
-            total_steps=total_steps,
-            status="Starting...",
-            config_context=config_context or {}
-        )
+        self.progress.type = mission_type
+        self.progress.total_steps = total_steps
+        self.progress.config_context = config_context
+        self.progress.save()
+
+    def random_sleep(self, min_sec=1, max_sec=3):
+        """Helper for random sleep."""
+        time.sleep(random.uniform(min_sec, max_sec))
 
     def _finish_mission(self, final_status="Complete"):
         self.progress.update(is_active=False, status=final_status)
 
     def run_live_apply_mission(self, resumes, locations, limit, platforms, status_box):
-        """1. Easy Apply Live: Scout + Apply Now (Restricted to LinkedIn)"""
-        # Platforms selection from UI is already restricted to ["LinkedIn"] for this mode
-        valid_platforms = [p for p in platforms if p == "LinkedIn"]
+        """1. Easy Apply Live: Scout + Apply Now (LinkedIn, Indeed, Xing)"""
+        supported_platforms = ["LinkedIn", "Indeed", "Xing"]
+        valid_platforms = [p for p in platforms if p in supported_platforms]
         if not valid_platforms:
-            status_box.error("❌ Easy Apply Live is currently restricted to LinkedIn.")
+            status_box.error("❌ No supported platform selected. Choose LinkedIn, Indeed, or Xing.")
             return
 
         # Prepare Tasks
@@ -83,20 +84,34 @@ class MissionManager:
                         try:
                             if p_name == "LinkedIn":
                                 res = applier.live_apply_linkedin(kw, loc, target_count=limit, target_role=role_name, callback=lambda m: status_box.info(f"✨ {m}"))
+                            elif p_name == "Indeed":
+                                res = applier.live_apply_indeed(kw, loc, target_count=limit, target_role=role_name, callback=lambda m: status_box.info(f"✨ {m}"))
+                            elif p_name == "Xing":
+                                res = applier.live_apply_xing(kw, loc, target_count=limit, target_role=role_name, callback=lambda m: status_box.info(f"✨ {m}"))
                             else:
                                 logger.warning(f"Live apply for {p_name} is not supported in this mode.")
                                 res = {'applied': []}
 
                             applied_here = len(res.get('applied', []))
+                            if applied_here == 0:
+                                status_box.warning(f"ℹ️ No matching Quick Apply jobs found for {kw} on {p_name}.")
+                                logger.info(f"ℹ️ No matching Quick Apply jobs found for {kw} on {p_name}.")
+                            
                             # Update task completion
                             self.progress.tasks[task_idx]['completed'] = True
                             self.progress.update(jobs_applied=self.progress.jobs_applied + applied_here)
                             task_idx += 1
+                            status_box.success(f"✅ Finished {p_name}. Moving on...")
+                            logger.info(f"✅ Finished {p_name}. Moving on...")
 
                         except Exception as e:
-                            logger.error(f"Error during Live Apply on {p_name}: {e}")
+                            logger.error(f"❌ Error during Live Apply on {p_name}: {e}")
+                            status_box.error(f"⚠️ Error on {p_name}: {str(e)[:100]}")
+                            # Still increment task_idx so we don't get stuck
+                            task_idx += 1
                         finally:
                             applier.close()
+                            self.random_sleep(2, 4) # Brief pause before next platform
 
         self.db.archive_applied_jobs()
         self._finish_mission()
@@ -236,15 +251,19 @@ class MissionManager:
                         })
                         tasks.append({"label": f"Scrape for {kw} in {loc} on {p}", "completed": False, "type": "scout"})
 
-        scout_task_count = len(tasks)
+        scout_task_count = len([t for t in tasks if t['type'] == 'scout'])
+        potential_jobs = scout_task_count * limit
+        
         if use_browser_analysis:
             tasks.append({"label": "Run AI Analysis for all found jobs", "completed": False, "type": "analyze"})
 
         total_steps = len(tasks)
         
         # Log breakdown to status box and console
-        breakdown_msg = f"📊 **Mission Breakdown**: {total_steps} Tasks total\n"
-        breakdown_msg += f"- Scouting: {scout_task_count} ({total_resumes} Resumes x avg {total_keywords/total_resumes:.1f} Titles x {total_locs} Locs x {total_platforms} Platforms)\n"
+        breakdown_msg = f"📊 **Mission Breakdown**: {total_steps} Tasks total (Scouting for up to **{potential_jobs}** jobs)\n"
+        breakdown_msg += f"- Scouting: {scout_task_count} searches ({total_resumes} Resume x {total_keywords} Titles x {total_locs} Locs x {total_platforms} Platforms)\n"
+        breakdown_msg += f"- Limit: Up to {limit} jobs per search combination\n"
+        
         if use_browser_analysis:
             breakdown_msg += f"- AI Phase: Automated analysis enabled"
         else:

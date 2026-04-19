@@ -58,14 +58,44 @@ def render_applied_view(db):
     elif sort_by == "Platform":
         items.sort(key=lambda x: x[1].get('job_details', {}).get('Platform', ''))
 
+    grid_data = []
     for jid, data in items:
         details = data.get('job_details', {})
-        with st.expander(f"{details.get('Job Title')} @ {details.get('Company')} ({details.get('Platform')})"):
-            st.write(f"**Applied on:** {data.get('created_at', 'N/A')}")
-            st.write(f"**Target Role:** {details.get('Found_job', 'N/A')}")
-            st.write(f"**Link:** [Open]({details.get('Web Address') or details.get('link')})")
+        grid_data.append({
+            "Job ID": jid,
+            "Applied Position": details.get('Job Title', 'N/A'),
+            "Company Name": details.get('Company', 'N/A'),
+            "Applied on": data.get('created_at', 'N/A'),
+            "Applied against Job Title": details.get('Found_job', 'N/A'),
+            "Platform": details.get('Platform', 'N/A'),
+            "Link": details.get('Web Address') or details.get('link') or ""
+        })
 
-            if st.button("🗑️ Delete Application Record", key=f"del_app_{jid}"):
-                db.delete_applied(jid)
+    if grid_data:
+        df = pd.DataFrame(grid_data)
+        st.dataframe(
+            df,
+            column_config={
+                "Job ID": None,
+                "Link": st.column_config.LinkColumn("Link", display_text="Open")
+            },
+            hide_index=True,
+            use_container_width=True
+        )
+
+        st.markdown("---")
+        st.caption("Manage Records")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            del_job_id = st.selectbox(
+                "Select Application to Delete:", 
+                options=[row["Job ID"] for row in grid_data], 
+                format_func=lambda x: f"{next((item['Applied Position'] for item in grid_data if item['Job ID'] == x), '')} @ {next((item['Company Name'] for item in grid_data if item['Job ID'] == x), '')}"
+            )
+        with col2:
+            st.write("")
+            st.write("")
+            if st.button("🗑️ Delete", use_container_width=True):
+                db.delete_applied(del_job_id)
                 st.session_state['applied_jobs'] = db.load_applied()
                 st.rerun()

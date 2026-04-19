@@ -65,7 +65,7 @@ class LinkedInScraper(BaseScraper):
                 cards = self.driver.find_elements(By.CSS_SELECTOR, "li.occludable-update-artdeco-list-item") or \
                         self.driver.find_elements(By.CSS_SELECTOR, ".job-card-container")
                 
-                self.log(f"Found {len(cards)} cards so far on page (Total: {len(results)})...")
+                self.log(f"Found {len(cards)} cards on LinkedIn. Processing up to {limit - len(results)} more to reach limit...")
                 
                 for card in cards:
                     if len(results) >= limit: break

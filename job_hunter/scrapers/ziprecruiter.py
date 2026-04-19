@@ -28,7 +28,7 @@ class ZipRecruiterScraper(BaseScraper):
             cards = self.driver.find_elements(By.CSS_SELECTOR, "div.job_content") or \
                     self.driver.find_elements(By.CSS_SELECTOR, ".job_result_container")
 
-            self.log(f"Found {len(cards)} cards...")
+            self.log(f"Found {len(cards)} cards on ZipRecruiter. Processing up to {limit - len(results)} more to reach limit...")
             
             for card in cards:
                 if len(results) >= limit: break

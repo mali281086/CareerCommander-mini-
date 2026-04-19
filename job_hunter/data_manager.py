@@ -214,11 +214,11 @@ class DataManager:
         """
         # 1. SCOUTED
         curr = self.load_scouted()
-        job_id = f"{title}-{company}" # Construct ID
+        target_id = self.generate_job_id(title, company)
         
         new_list = [
             x for x in curr 
-            if not (x.get('title') == title and x.get('company') == company)
+            if self.generate_job_id(x.get('title'), x.get('company')) != target_id
         ]
         
         with open(SCOUTED_FILE, "w", encoding="utf-8") as f:
@@ -253,12 +253,10 @@ class DataManager:
         new_scouted = []
         
         for job in scouted:
-            # Reconstruct ID
-            # Note: Startup normalization in app.py renames keys, but raw json has 'title', 'company'
-            # We must use raw keys here.
+            # Reconstruct ID using standardized method
             j_title = job.get('title', 'Unknown')
             j_company = job.get('company', 'Unknown')
-            job_id = f"{j_title}-{j_company}"
+            job_id = self.generate_job_id(j_title, j_company)
             
             if job_id not in applied:
                 new_scouted.append(job)
@@ -295,6 +293,14 @@ class DataManager:
         
         data[job_id] = record
         with open(APPLIED_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=2, ensure_ascii=False)
+        
+        import streamlit as st
+        try:
+            if 'applied_jobs' in st.session_state:
+                st.session_state['applied_jobs'] = data
+        except Exception:
+            pass
+            
         return data
 
     def delete_applied(self, job_id):
@@ -302,6 +308,13 @@ class DataManager:
         if job_id in data:
             del data[job_id]
             with open(APPLIED_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=2, ensure_ascii=False)
+            
+            import streamlit as st
+            try:
+                if 'applied_jobs' in st.session_state:
+                    st.session_state['applied_jobs'] = data
+            except Exception:
+                pass
         return data
 
     # --- CACHE (AI Results) ---
@@ -339,18 +352,15 @@ class DataManager:
         """
         # 1. Add to Parked
         parked = self.load_parked()
+        target_id = self.generate_job_id(title, company)
         
         # Check if already parked
-        exists = False
-        for p in parked:
-            if p.get('title') == title and p.get('company') == company:
-                exists = True
-                break
+        exists = any(self.generate_job_id(p.get('title'), p.get('company')) == target_id for p in parked)
         
         if not exists:
             # Construct minimal or full record
             record = {
-                "id": f"{title}-{company}",
+                "id": target_id,
                 "title": title,
                 "company": company,
                 "parked_at": datetime.now().isoformat()

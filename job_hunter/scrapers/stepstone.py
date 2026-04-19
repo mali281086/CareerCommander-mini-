@@ -31,7 +31,7 @@ class StepstoneScraper(BaseScraper):
         scrolled = 0
         while len(results) < limit and scrolled < 3:
             cards = self.driver.find_elements(By.TAG_NAME, "article")
-            self.log(f"Found {len(cards)} cards...")
+            self.log(f"Found {len(cards)} cards on Stepstone. Processing up to {limit - len(results)} more to reach limit...")
             
             for card in cards:
                 if len(results) >= limit: break
