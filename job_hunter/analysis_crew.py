@@ -156,4 +156,9 @@ Specific Instructions:
         if close_after:
             browser_llm.close_tab()
             
+        # Trigger PDF generation if cover letter was returned
+        if "cover_letter" in results and results["cover_letter"]:
+            from tools.pdf_generator import generate_cover_letter_pdf
+            generate_cover_letter_pdf(results["cover_letter"])
+
         return results

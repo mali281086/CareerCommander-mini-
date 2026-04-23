@@ -96,6 +96,18 @@ def render_home_view(db):
             for name, data in list(st.session_state['resumes'].items()):
                 with st.expander(f"📋 {name}", expanded=True):
                     c1, c2 = st.columns([4, 1])
+                    # Load History for this resume (before widget to allow state updates)
+                    history = db.load_resume_title_history(name)
+                    if history:
+                        st.caption(f"Recent: {', '.join(history[:3])}...")
+                        if st.button(f"🔄 Load History", key=f"btn_prev_{name}", use_container_width=True):
+                            kw_str = "; ".join(history)
+                            st.session_state['resumes'][name]['target_keywords'] = kw_str
+                            # Pre-set the widget value before it's created
+                            st.session_state[f"kw_{name}"] = kw_str
+                            db.save_resume_config(st.session_state['resumes'])
+                            st.rerun()
+
                     # Target Keywords for this resume
                     kw = c1.text_input("Job Titles (separate by ';')",
                                        value=data.get('target_keywords', ""),
@@ -106,18 +118,6 @@ def render_home_view(db):
                         del st.session_state['resumes'][name]
                         db.save_resume_config(st.session_state['resumes'])
                         st.rerun()
-
-                    # Load History for this resume
-                    history = db.load_resume_title_history(name)
-                    if history:
-                        st.caption(f"Recent: {', '.join(history[:3])}...")
-                        if st.button(f"🔄 Load History", key=f"btn_prev_{name}", use_container_width=True):
-                            kw_str = "; ".join(history)
-                            st.session_state['resumes'][name]['target_keywords'] = kw_str
-                            # Also update the widget's state
-                            st.session_state[f"kw_{name}"] = kw_str
-                            db.save_resume_config(st.session_state['resumes'])
-                            st.rerun()
 
                     if kw != data.get('target_keywords'):
                         st.session_state['resumes'][name]['target_keywords'] = kw

@@ -18,7 +18,8 @@ class MissionManager:
 
     def _start_mission(self, mission_type, total_steps=0, config_context=None):
         self.progress.reset()
-        self.progress.type = mission_type
+        self.progress.mission_type = mission_type  # Fixed attribute name from 'type' to 'mission_type'
+        self.progress.is_active = True
         self.progress.total_steps = total_steps
         self.progress.config_context = config_context
         self.progress.save()
@@ -117,16 +118,16 @@ class MissionManager:
         self._finish_mission()
 
     def run_batch_apply_mission(self, eligible_jobs, resume_path, phone_number, status_box, resume_mapping=None):
-        """2. Easy Apply Batch: Apply to already scouted jobs"""
+        """2. Vision Batch Apply: Apply to already scouted jobs using Vision AI"""
         count = len(eligible_jobs)
         tasks = []
         for job in eligible_jobs:
             title = job.get('title') or job.get('Job Title') or "Unknown Title"
             tasks.append({"label": f"Apply to {title}", "completed": False, "type": "apply"})
 
-        self._start_mission("Easy Apply Batch", total_steps=count)
+        self._start_mission("Vision Batch Apply", total_steps=count)
         self.progress.update(tasks=tasks, current_task_idx=0)
-        p_bar = status_box.progress(0, text="🤖 Batch Apply Progress")
+        p_bar = status_box.progress(0, text="🚀 Vision Batch Apply Progress")
 
         # Initial Applier with fallback resume
         applier = JobApplier(resume_path=resume_path, phone_number=phone_number)
@@ -143,7 +144,7 @@ class MissionManager:
         for i, job in enumerate(eligible_jobs):
             curr = i + 1
             perc = min(curr / count, 1.0)
-            p_bar.progress(perc, text=f"🤖 Applying to job {curr} of {count}")
+            p_bar.progress(perc, text=f"🚀 Applying to job {curr} of {count} (Vision Mode)")
 
             url = get_valid_val(job, "link", "Web Address")
             platform = get_valid_val(job, "platform", "Platform")
@@ -165,19 +166,20 @@ class MissionManager:
                     applier.resume_path = resume_path
                 res_display = os.path.basename(applier.resume_path) if applier.resume_path else 'No Resume'
 
-            self.progress.update(current_step=curr, current_task_idx=i, status=f"Applying to {title}...")
-            status_box.text(f"🚀 [{i+1}/{count}] Applying to {title} @ {company} using {res_display}...")
+            self.progress.update(current_step=curr, current_task_idx=i, status=f"Vision Applying to {title}...")
+            status_box.text(f"🛰️ [{i+1}/{count}] Vision Session: {title} @ {company} using {res_display}...")
 
             if not url or not platform:
                 logger.warning(f"Skipping job {title} due to missing URL or Platform.")
                 continue
 
             try:
+                # Vision-enabled apply method
                 success, message, is_easy = applier.apply(url, platform, skip_detection=True, job_title=title, company=company)
                 
-                # Correction Logic: If discovery reveals this is NOT an easy apply job, update the DB
-                if is_easy is False:
-                    logger.info(f"📍 Database Correction: {title} marked as STANDARD (not easy apply)")
+                # Correction Logic: If discovery reveals the Easy Apply badge was wrong, update state
+                if is_easy is False and job.get('is_easy_apply') is True:
+                    logger.info(f"📍 Database Correction: {title} identified as STANDARD portal.")
                     job['is_easy_apply'] = False
                     # We will save all corrections at the end of the loop
 

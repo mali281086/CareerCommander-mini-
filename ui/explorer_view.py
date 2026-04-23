@@ -101,13 +101,12 @@ def render_explorer_view(db):
                 st.warning("Select a specific language first.")
 
     with c_act3:
-        # Easy Apply Batch
-        apply_platforms = ["LinkedIn", "Xing", "Indeed"]
-        eligible_for_easy = filtered[filtered["Easy Apply"] & (filtered["Status"] == "") & filtered["Platform"].isin(apply_platforms)]
-        eligible_count = len(eligible_for_easy)
-
-        if st.button(f"🤖 Easy Apply Batch ({eligible_count})", type="primary", use_container_width=True, disabled=(eligible_count == 0)):
-            render_easy_apply_confirm(eligible_for_easy, db)
+        selected_count = len(st.session_state['selected_jobs'])
+        btn_label = f"🚀 Apply Selected ({selected_count})"
+        if st.button(btn_label, type="primary", use_container_width=True, disabled=(selected_count == 0)):
+            # Filter specifically selected jobs
+            selected_df = filtered[filtered.apply(lambda r: f"{r['Job Title']}-{r['Company']}" in st.session_state['selected_jobs'], axis=1)]
+            render_vision_apply_confirm(selected_df, db)
 
     with c_act4:
         selected_count = len(st.session_state['selected_jobs'])
@@ -170,27 +169,31 @@ def render_explorer_view(db):
 
             # Action buttons
             with c5:
-                act_cols = st.columns(5)
+                act_cols = st.columns(6)
+                
+                if act_cols[0].button("🚀", key=f"apply_{job_id}_{idx}", help="Apply via Vision API"):
+                    # Launch single job confirm/direct
+                    render_vision_apply_confirm(pd.DataFrame([row]), db)
                 
                 if row.get('link'):
-                    act_cols[0].link_button("🔗", row['link'], help="Open Job Link")
+                    act_cols[1].link_button("🔗", row['link'], help="Open Job Link")
                 else:
-                    act_cols[0].button("🔗", disabled=True, key=f"nolink_{job_id}_{idx}")
+                    act_cols[1].button("🔗", disabled=True, key=f"nolink_{job_id}_{idx}")
                 
-                if act_cols[1].button("📝", key=f"intel_{job_id}_{idx}", help="Analyze"):
+                if act_cols[2].button("📝", key=f"intel_{job_id}_{idx}", help="Analyze"):
                     render_analysis_dialog(row.to_dict(), db)
-
-                if act_cols[2].button("✅", key=f"mark_{job_id}_{idx}", help="Mark as Applied"):
+                
+                if act_cols[3].button("✅", key=f"mark_{job_id}_{idx}", help="Mark as Applied"):
                     st.session_state['applied_jobs'] = db.save_applied(job_id, row.to_dict(), status="applied")
                     db.archive_applied_jobs()
                     st.toast(f"Marked {row['Job Title']} as Applied!")
                     st.rerun()
 
-                if act_cols[3].button("🅿️", key=f"park_{job_id}_{idx}", help="Park (Hide)"):
+                if act_cols[4].button("🅿️", key=f"park_{job_id}_{idx}", help="Park (Hide)"):
                     db.park_job(row['Job Title'], row['Company'], row.to_dict())
                     st.rerun()
 
-                if act_cols[4].button("🗑️", key=f"del_{job_id}_{idx}", help="Delete"):
+                if act_cols[5].button("🗑️", key=f"del_{job_id}_{idx}", help="Delete"):
                     db.delete_scouted_job(row['Job Title'], row['Company'])
                     st.rerun()
 
@@ -334,11 +337,12 @@ def render_chat_tab(job, resume_name, resume_data, analysis_results, db):
                 db.save_cache(job_id, st.session_state['job_cache'][job_id])
                 st.rerun()
 
-@st.dialog("🚀 Confirm Batch Apply")
-def render_easy_apply_confirm(eligible_jobs, db):
-    st.warning("⚠️ **Confirmation Required**")
+@st.dialog("🚀 Confirm Vision Batch Apply")
+def render_vision_apply_confirm(eligible_jobs, db):
+    st.info("🚀 **Vision-Based Application**")
     count = len(eligible_jobs)
-    st.markdown(f"**Are you sure you want to start Easy Apply for {count} jobs?**")
+    st.markdown(f"**Are you sure you want to launch the Vision Applier for {count} jobs?**")
+    st.caption("The bot will navigate, analyze screenshots, and fill forms automatically.")
 
     # Build mapping for auto-selection in the background
     resume_mapping = { name: data.get('file_path') for name, data in st.session_state.get('resumes', {}).items() }
@@ -349,7 +353,7 @@ def render_easy_apply_confirm(eligible_jobs, db):
     easy_phone = st.text_input("Phone Number (optional)", value="+49 176 26983236")
 
     c1, c2 = st.columns(2)
-    if c1.button("✅ Confirm Auto-Apply", type="primary"):
+    if c1.button("✅ Launch Vision Bot", type="primary"):
         from job_hunter.mission_manager import MissionManager
         mm = MissionManager(db)
 
@@ -357,16 +361,16 @@ def render_easy_apply_confirm(eligible_jobs, db):
         # Fill NaN values to avoid crashes in mission manager
         jobs_list = eligible_jobs.fillna("").to_dict('records')
 
-        with st.spinner("Executing Batch Apply..."):
+        with st.spinner("Vision Bot is working..."):
             mm.run_batch_apply_mission(
                 eligible_jobs=jobs_list,
-                resume_path=default_path, # Now used as a silent system default
+                resume_path=default_path,
                 phone_number=easy_phone,
                 status_box=status_box,
                 resume_mapping=resume_mapping
             )
 
-        st.success("🎉 Batch Apply Complete!")
+        st.success("🎉 Vision Batch Apply Complete!")
         st.rerun()
 
     if c2.button("❌ Cancel"):
