@@ -14,14 +14,26 @@ class PDFGenerator:
             "github": "github.com/mali281086"
         }
 
-    def generate_cover_letter(self, ai_text, output_path="data/generated_cover_letter.pdf"):
+    def generate_cover_letter(self, ai_text, output_path="data/Cover_Letter.pdf"):
         """
         Parses AI generated text and creates a professional PDF.
-        AI text usually contains 'Subject: ...' and the body.
         """
         try:
-            # Ensure data directory exists
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            # If path is a directory, append default filename
+            if os.path.isdir(output_path) or output_path.endswith("/") or output_path.endswith("\\"):
+                output_path = os.path.join(output_path, "Cover_Letter.pdf")
+            
+            # Ensure file extension
+            if not output_path.lower().endswith(".pdf"):
+                output_path += ".pdf"
+
+            # Sanitize text for FPDF
+            ai_text = ai_text.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"').replace("–", "-")
+            
+            # Ensure directory exists
+            parent_dir = os.path.dirname(output_path)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
 
             pdf = FPDF()
             pdf.add_page()
@@ -65,13 +77,31 @@ class PDFGenerator:
             pdf.ln(2)
 
             # --- Body ---
-            # Reconstruct body skipping salutation if AI already included it
+            # Reconstruct body skipping salutation and common closings if AI already included them
             body_lines = lines[body_start_idx:]
             clean_body = []
+            
+            # Common closing phrases to strip out
+            closings = [
+                "dear hiring team", "dear hiring manager", "dear hiring",
+                "yours sincerely", "sincerely", "regards", "best regards", 
+                "kind regards", "yours faithfully", "thank you", "sincerely yours"
+            ]
+            
+            user_name_low = self.contact_info["name"].lower().strip()
+
             for line in body_lines:
                 l_low = line.lower().strip()
-                if any(x in l_low for x in ["dear hiring team", "dear hiring manager", "yours sincerely"]):
+                if not l_low:
+                    clean_body.append("") # Keep empty lines for spacing
                     continue
+                
+                # Skip lines that are just closings or the user's own name
+                if any(l_low == c or l_low.startswith(c + ",") or l_low.startswith(c + " ") for c in closings):
+                    continue
+                if l_low == user_name_low:
+                    continue
+                    
                 clean_body.append(line)
 
             full_body = "\n".join(clean_body).strip()
@@ -95,5 +125,7 @@ class PDFGenerator:
 
 # Singleton-like helper
 _generator = PDFGenerator()
-def generate_cover_letter_pdf(text_content):
+def generate_cover_letter_pdf(text_content, output_path=None):
+    if output_path:
+        return _generator.generate_cover_letter(text_content, output_path=output_path)
     return _generator.generate_cover_letter(text_content)

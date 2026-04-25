@@ -65,7 +65,6 @@ class JobAnalysisCrew:
             components = ['intel', 'cover_letter', 'ats', 'resume']
 
         # Truncate inputs to avoid LLM limits and browser paste issues
-        # 3000 chars is usually safe for most LLMs and doesn't lose critical context
         truncated_job = self.job_text[:3000] if self.job_text else ""
         truncated_resume = self.resume_text[:3000] if self.resume_text else ""
 
@@ -74,11 +73,10 @@ class JobAnalysisCrew:
         from job_hunter.data_manager import DataManager
         db = DataManager()
         bot_config = db.load_bot_config()
-        # Respect headless setting from bot config, default to True
+        # Respect headless setting from bot config
         headless = bot_config.get("settings", {}).get("ai_headless", True)
 
         provider = os.getenv("BROWSER_LLM_PROVIDER", "ChatGPT")
-        # Run analysis using a dedicated profile to avoid interference
         browser_llm = BrowserLLM(provider=provider, profile_name="llm_profile", headless=headless)
 
         # Construct a combined prompt
@@ -150,15 +148,25 @@ Specific Instructions:
             return {"error": response_text}
 
         results = self._clean_json(response_text)
-        if not results:
-            results = {"error": f"Failed to parse JSON from AI response. Raw response: {response_text[:200]}..."}
-
-        if close_after:
-            browser_llm.close_tab()
+        
+        if not results or (isinstance(results, dict) and len(results) <= 1 and "status" in results):
+            snippet = response_text[:200].replace('\n', ' ')
+            logger.error(f"[AnalysisCrew] Failed to parse meaningful JSON. Raw response snippet: {snippet}")
+            if close_after:
+                browser_llm.close_tab()
             
+            error_msg = "AI returned an empty or unparseable response."
+            if "login" in response_text.lower() or "sign up" in response_text.lower():
+                error_msg += " It looks like the AI provider is asking for a login even in Guest mode."
+            
+            return {"error": error_msg}
+        
         # Trigger PDF generation if cover letter was returned
         if "cover_letter" in results and results["cover_letter"]:
             from tools.pdf_generator import generate_cover_letter_pdf
             generate_cover_letter_pdf(results["cover_letter"])
 
+        if close_after:
+            browser_llm.close_tab()
+            
         return results

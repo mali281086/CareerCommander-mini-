@@ -58,6 +58,7 @@ class BrowserManager:
         
         if headless:
             options.add_argument("--headless")
+            options.add_argument("--window-size=1920,1080")
 
         try:
             # undetected_chromedriver automatically bypasses most bot detection

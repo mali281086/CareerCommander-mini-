@@ -393,6 +393,14 @@ class MissionManager:
                     r['_resume_text'] = item.get('resume_text', '')
                     r['_resume_filename'] = item.get('resume_filename', '')
                     r['_role_name'] = item.get('role_name', '')
+                
+                # RE-SAVE to DB with the new role tags
+                if results:
+                    all_scouted = self.db.load_scouted()
+                    # Results are already in all_scouted (saved by scout.py), we just need to update them
+                    # Find them by link or just overwrite everything (safer if append=True was used)
+                    # Actually, let's just update the list we just got back and save it.
+                    self.db.save_scouted_jobs(all_scouted, append=False)
 
                 # Add to analysis backlog
                 if use_analysis:

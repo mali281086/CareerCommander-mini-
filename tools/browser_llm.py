@@ -97,8 +97,22 @@ class BrowserLLM:
         try:
             wait = WebDriverWait(self.driver, 15)
             if self.provider == "ChatGPT":
+                # Handle the "Start chatting" button that appears for guest users
+                try:
+                    start_btns = self.driver.find_elements(By.XPATH, "//button[contains(., 'Start chatting')]")
+                    if start_btns:
+                        start_btns[0].click()
+                        time.sleep(2)
+                except: pass
                 wait.until(EC.presence_of_element_located((By.ID, "prompt-textarea")))
             elif self.provider == "Gemini":
+                # Handle Gemini guest screen if needed
+                try:
+                    chat_now = self.driver.find_elements(By.XPATH, "//span[contains(text(), 'Chat now')]")
+                    if chat_now:
+                        chat_now[0].click()
+                        time.sleep(2)
+                except: pass
                 wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[contenteditable='true']")))
             elif self.provider == "Copilot":
                 wait.until(EC.presence_of_element_located((By.TAG_NAME, "textarea")))
@@ -140,9 +154,17 @@ class BrowserLLM:
         """Sends prompt and waits for response."""
         self._ensure_tab()
 
-        # Pre-check for login wall
+        # Pre-check for login wall, but only if we can't find the prompt area
         current_url = self.driver.current_url.lower()
-        if "login" in current_url or "auth" in current_url or "sign-in" in current_url:
+        has_prompt = False
+        try:
+            if self.provider == "ChatGPT":
+                has_prompt = len(self.driver.find_elements(By.ID, "prompt-textarea")) > 0
+            elif self.provider == "Gemini":
+                has_prompt = len(self.driver.find_elements(By.CSS_SELECTOR, "div[contenteditable='true']")) > 0
+        except: pass
+
+        if not has_prompt and ("login" in current_url or "auth" in current_url or "sign-in" in current_url):
              return f"ERROR: Browser is stuck on a login/auth page ({current_url}). Please log in using the 'Login to AI' button in the sidebar."
 
         if self.provider == "ChatGPT":
@@ -157,10 +179,22 @@ class BrowserLLM:
     def _ask_chatgpt(self, prompt, timeout):
         try:
             # Check if user is on the logged-out ChatGPT screen
+            # Check if user is stuck on a join/login screen without a prompt box
             try:
+                prompt_exists = len(self.driver.find_elements(By.ID, "prompt-textarea")) > 0
                 page_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
-                if "log in" in page_text and "sign up" in page_text and not self.driver.find_elements(By.ID, "prompt-textarea"):
-                    return "ERROR: You are logged out of ChatGPT. Please use the 'Login to AI' button in the Bot Setup menu to log in first."
+                
+                # If we see "Log in" and NO prompt area, we are definitely stuck
+                if not prompt_exists and ("log in" in page_text and "sign up" in page_text):
+                    return "ERROR: ChatGPT is asking for login. Headless Guest mode might be restricted. Please use 'Login to AI' to set up a session."
+                
+                # Handle the "Join ChatGPT" overlay if it appears
+                try:
+                    join_close = self.driver.find_elements(By.CSS_SELECTOR, "button[aria-label='Close']")
+                    if join_close:
+                        join_close[0].click()
+                        time.sleep(1)
+                except: pass
             except:
                 pass
                 

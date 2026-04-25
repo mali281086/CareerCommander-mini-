@@ -12,21 +12,21 @@ Analyze the provided web UI screenshot and the user's resume text to progress a 
 The screenshot is from a browser viewport. Use 2D normalized coordinates [ymin, xmin, ymax, xmax] (0-1000 scale).
 
 STRICT JSON OUTPUT:
-{
+{{
   "page_purpose": "Brief description",
   "status": "continue | error | success | review_needed",
   "human_intervention_needed": boolean,
   "intervention_reason": "Required if human_intervention_needed is true",
   "actions": [
-      {
+      {{
           "type": "click | type | scroll | pause | upload",
           "reason": "Why?",
           "coordinates": [ymin, xmin, ymax, xmax],
           "text_to_type": "Data if 'type' set",
           "file_to_upload": "resume | cover_letter"
-      }
+      }}
   ]
-}
+}}
 
 RULES:
 - If 'Submit' or 'Review' page, set human_intervention_needed=true.
@@ -70,14 +70,31 @@ class VisionCore:
             img.save(buf, format="JPEG", quality=75, optimize=True)
             return Image.open(buf)
 
+    def _clean_json(self, text):
+        if not text: return {}
+        try:
+            import re
+            # Extract content from markdown blocks if present
+            match = re.search(r"```(?:json)?(.*?)```", text, re.DOTALL)
+            if match:
+                text = match.group(1).strip()
+            # Find the first { and last }
+            start = text.find('{')
+            end = text.rfind('}')
+            if start != -1 and end != -1:
+                return json.loads(text[start:end+1])
+            return json.loads(text)
+        except Exception as e:
+            logger.error(f"Vision JSON Parse Error: {e}")
+            return None
+
     def get_vision_decision(self, screenshot_path, resume_text, retries=2):
         last_error = None
         for attempt in range(retries + 1):
             try:
-                # Add human jitter delay to respect RPM limits on free tier
                 if attempt > 0:
-                    wait_time = (attempt * 5) # 5s, 10s backoff
-                    logger.info(f"Retrying Vision API call in {wait_time}s... (Attempt {attempt+1})")
+                    wait_time = (attempt * 5)
+                    logger.info(f"Retrying Vision API... {wait_time}s")
                     time.sleep(wait_time)
                 
                 prompt = VISION_PROMPT.format(resume_text=str(resume_text))
@@ -86,20 +103,21 @@ class VisionCore:
                 response = self.model.generate_content([prompt, processed_img])
                 
                 raw_text = response.text
-                return json.loads(raw_text.strip())
+                decision = self._clean_json(raw_text)
+                if decision:
+                    return decision
+                else:
+                    last_error = "Malformed JSON from AI"
             
             except Exception as e:
                 last_error = str(e)
-                if "429" in last_error or "quota" in last_error.lower():
-                    logger.warning(f"[VisionCore] Rate limit hit on attempt {attempt+1}")
-                    continue
-                else:
-                    break # Don't retry non-quota errors
+                if "429" in last_error: continue
+                else: break
         
-        logger.error(f"[VisionCore] API Error after {attempt+1} attempts: {last_error}")
+        logger.error(f"[VisionCore] API Error: {last_error}")
         return {
             "status": "error", 
             "human_intervention_needed": True, 
-            "intervention_reason": f"AI API Error: {last_error}", 
+            "intervention_reason": f"AI Error: {last_error}", 
             "actions": []
         }

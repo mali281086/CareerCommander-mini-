@@ -16,11 +16,12 @@ def render_settings_view(db):
     st.divider()
 
     # Tab layout
-    tab_answers, tab_unknown, tab_add, tab_behavior, tab_selectors = st.tabs([
+    tab_answers, tab_unknown, tab_add, tab_behavior, tab_blacklist, tab_selectors = st.tabs([
         "📝 My Answers",
         "❓ Unknown Questions",
         "➕ Add New",
         "🤖 Bot Behavior",
+        "🚫 Blacklist",
         "🛠️ Advanced Selectors"
     ])
 
@@ -122,9 +123,57 @@ def render_settings_view(db):
             db.save_bot_config(bot_config)
             st.toast("✅ Bot Behavior Updated!")
             st.rerun()
+            
+        st.divider()
+        
+        # Cover Letter Path Setting
+        st.subheader("📄 Document Export Settings")
+        current_path = bot_config.get("settings", {}).get("cover_letter_path", "data/Cover_Letter.pdf")
+        new_path = st.text_input("Cover Letter Save Path", value=current_path, 
+                                 help="Where the PDF cover letter will be saved. Use .pdf extension.")
+        
+        if new_path != current_path:
+            bot_config["settings"]["cover_letter_path"] = new_path
+            db.save_bot_config(bot_config)
+            st.toast("✅ Export Path Updated!")
+            st.rerun()
 
         st.divider()
         st.caption("Note: These settings affect how the AI Analysis and Auto-Apply engines interact with your browser.")
+
+    with tab_blacklist:
+        st.subheader("🚫 Global Blacklist")
+        st.caption("Jobs matching these keywords will be automatically dropped during scouting.")
+        
+        blacklist = db.load_blacklist()
+        
+        c1, c2 = st.columns(2)
+        
+        # Titles
+        bl_titles = c1.text_area("🚫 Blocked Job Titles (one per line)", 
+                                 value="\n".join(blacklist.get("titles", [])),
+                                 help="e.g. 'Intern', 'Working Student', 'Senior'")
+        
+        # Companies
+        bl_companies = c2.text_area("🚫 Blocked Companies (one per line)", 
+                                   value="\n".join(blacklist.get("companies", [])),
+                                   help="e.g. 'Amazon', 'Facebook'")
+        
+        # Safe Phrases
+        st.subheader("✅ Safe Phrases (Rescue Mission)")
+        st.caption("If a title is blocked but contains a safe phrase, it will be kept. (e.g. Block 'Senior', but keep 'Senior Data Analyst')")
+        safe_phrases = st.text_area("Safe Phrases (one per line)", 
+                                   value="\n".join(blacklist.get("safe_phrases", [])),
+                                   help="Keywords that 'rescue' a job from the blacklist.")
+        
+        if st.button("💾 Save Blacklist", type="primary"):
+            new_titles = [t.strip() for t in bl_titles.split("\n") if t.strip()]
+            new_companies = [c.strip() for c in bl_companies.split("\n") if c.strip()]
+            new_safe = [s.strip() for s in safe_phrases.split("\n") if s.strip()]
+            
+            db.save_blacklist(new_companies, new_titles, new_safe)
+            st.success("✅ Blacklist Updated!")
+            st.rerun()
 
     with tab_selectors:
         st.subheader("🛠️ CSS/XPath Selectors Configuration")
