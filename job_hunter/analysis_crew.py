@@ -59,7 +59,7 @@ class JobAnalysisCrew:
             logger.info(f"DEBUG: JSON CLEAN FAILED: {e}")
             return {}
 
-    def run_analysis(self, components=None, use_browser=True, close_after=True):
+    def run_analysis(self, components=None, use_browser=True, close_after=True, browser_llm=None, clear_chat=True):
         """Runs the analysis using a browser-based LLM instead of API."""
         if components is None:
             components = ['intel', 'cover_letter', 'ats', 'resume']
@@ -77,7 +77,13 @@ class JobAnalysisCrew:
         headless = bot_config.get("settings", {}).get("ai_headless", True)
 
         provider = os.getenv("BROWSER_LLM_PROVIDER", "ChatGPT")
-        browser_llm = BrowserLLM(provider=provider, profile_name="llm_profile", headless=headless)
+        
+        # Reuse existing browser session if provided
+        if browser_llm is None:
+            browser_llm = BrowserLLM(provider=provider, profile_name="llm_profile", headless=headless)
+        
+        if clear_chat:
+            browser_llm.new_chat()
 
         # Construct a combined prompt
         prompt = f"""

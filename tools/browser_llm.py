@@ -150,6 +150,65 @@ class BrowserLLM:
         except Exception as e:
             logger.info(f"Error quitting browser: {e}")
 
+    def close_tab(self):
+        """Closes the current tab and resets handle."""
+        if self.tab_handle and self.driver:
+            try:
+                self.driver.switch_to.window(self.tab_handle)
+                self.driver.close()
+                self.tab_handle = None
+                # Switch to first remaining handle if any
+                if self.driver.window_handles:
+                    self.driver.switch_to.window(self.driver.window_handles[0])
+            except:
+                pass
+
+    def new_chat(self):
+        """Attempts to start a new chat session to clear context."""
+        self._ensure_tab()
+        try:
+            if self.provider == "ChatGPT":
+                # Click the sidebar "New chat" button or use shortcut
+                # Shortcut Ctrl+Shift+O sometimes works but clicking is safer
+                selectors = [
+                    "a[href='/']", # Often the sidebar link
+                    "button[aria-label='New chat']",
+                    "div[data-testid='new-chat-button']",
+                    "nav a.flex.py-3.px-3"
+                ]
+                for sel in selectors:
+                    btns = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                    for btn in btns:
+                        if btn.is_displayed():
+                            btn.click()
+                            time.sleep(2)
+                            return True
+                # Fallback: Refresh page
+                self.driver.refresh()
+                self._wait_for_page_load()
+            
+            elif self.provider == "Gemini":
+                # Gemini has a "+" or "New chat" in sidebar
+                selectors = [
+                    "button[aria-label='New chat']",
+                    "a[href='/app']",
+                    "div.new-chat-button"
+                ]
+                for sel in selectors:
+                    btns = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                    for btn in btns:
+                        if btn.is_displayed():
+                            btn.click()
+                            time.sleep(2)
+                            return True
+                self.driver.refresh()
+                self._wait_for_page_load()
+        except Exception as e:
+            logger.info(f"Failed to start new chat: {e}")
+            self.driver.refresh()
+            self._wait_for_page_load()
+        return False
+
     def ask(self, prompt, timeout=120):
         """Sends prompt and waits for response."""
         self._ensure_tab()

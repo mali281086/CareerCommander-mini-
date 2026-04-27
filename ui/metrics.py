@@ -10,17 +10,33 @@ def render_metrics_dashboard(current_df, applied_dict, parked_count=0):
 
     # --- 0. PRE-PROCESSING ---
 
-    # Ensure current_df has 'Found_job'
-    if not current_df.empty and 'Found_job' not in current_df.columns:
-        current_df['Found_job'] = "Unknown"
+    # Normalize current_df (Scouted Jobs)
+    if not current_df.empty:
+        # Map 'Found_job'
+        if 'Found_job' not in current_df.columns:
+            current_df['Found_job'] = "Unknown"
+        
+        # Map 'platform' -> 'Platform'
+        if 'platform' in current_df.columns:
+            current_df['Platform'] = current_df['platform']
+        elif 'Platform' not in current_df.columns:
+            current_df['Platform'] = "Unknown"
+            
+        # Map 'language' -> 'Language'
+        if 'language' in current_df.columns:
+            current_df['Language'] = current_df['language']
+        elif 'Language' not in current_df.columns:
+            current_df['Language'] = "Unknown"
 
     # Convert Applied Dict to DataFrame
     applied_rows = []
     for jid, data in applied_dict.items():
         details = data.get('job_details', {})
         applied_rows.append({
-            "Platform": details.get('Platform', 'Unknown'),
-            "Found_job": details.get('Found_job', 'Unknown'),
+            # Handle both casing variants for robustness
+            "Platform": details.get('Platform') or details.get('platform') or "Unknown",
+            "Found_job": details.get('Found_job') or details.get('found_job') or "Unknown",
+            "Language": details.get('Language') or details.get('language') or "Unknown",
             "created_at": data.get('created_at', datetime.now().isoformat())
         })
     applied_df = pd.DataFrame(applied_rows)

@@ -7,7 +7,45 @@ from tools.browser_manager import BrowserManager
 from ui.metrics import render_metrics_dashboard
 import os
 
+def get_mapped_resume_name(db, row):
+    """Resolves the best resume filename for a given job row, prioritizing existing analysis."""
+    resumes = st.session_state.get('resumes', {})
+    cache = db.load_cache()
+    title = row.get('title', 'Unknown')
+    company = row.get('company', 'Unknown')
+
+    # 1. PRIORITY: Check if an analysis already exists in cache for ANY resume
+    # This ensures that if the user manually re-ran analysis with a different resume, 
+    # the UI subtext updates to show THAT resume.
+    for r_name in resumes:
+        job_id = db.generate_job_id(title, company, r_name)
+        if job_id in cache and "error" not in cache[job_id]:
+            return r_name
+
+    # 2. Match on _resume_filename (Original scouting mapping)
+    res_file = row.get('_resume_filename')
+    if res_file in resumes:
+        return res_file
+        
+    # 3. Lookup role in history
+    history = db.load_all_resume_history()
+    role = row.get('_role_name') or row.get('Found_job')
+    if role:
+        for r_name, titles in history.items():
+            if r_name in resumes and role in titles:
+                return r_name
+    
+    # 4. Fuzzy match role in resume filenames
+    if role:
+        for r_name in resumes:
+            if role.lower() in r_name.lower():
+                return r_name
+    
+    # 5. Fallback to first resume
+    return list(resumes.keys())[0] if resumes else "Default Resume"
+
 def render_explorer_view(db):
+
     # Premium UI Styling for Buttons - FLASHY EDITION
     st.markdown("""
         <style>
@@ -56,8 +94,18 @@ def render_explorer_view(db):
     # Initialize selection state
     if 'selected_jobs' not in st.session_state:
         st.session_state['selected_jobs'] = set()
-    if 'applied_jobs' not in st.session_state:
-        st.session_state['applied_jobs'] = [j['link'] for j in db.load_applied()]
+    if 'applied_jobs_ids' not in st.session_state:
+        # Build a set of title-company base IDs for robust matching
+        applied_data = db.load_applied()
+        ids = set()
+        for k, v in applied_data.items():
+            details = v.get('job_details', {})
+            a_title = details.get('title') or details.get('Job Title', '')
+            a_company = details.get('company') or details.get('Company', '')
+            if a_title and a_company:
+                a_title_clean = a_title.split('\n')[0].strip()
+                ids.add(f"{a_title_clean}-{a_company.strip()}")
+        st.session_state['applied_jobs_ids'] = ids
 
     # Use all jobs without filtering as requested
     filtered = df
@@ -106,9 +154,32 @@ def render_explorer_view(db):
     with c_act4:
         selected_count = len(st.session_state['selected_jobs'])
         btn_label = f"🧠 Batch AI Analysis ({selected_count})" if selected_count > 0 else "🧠 Batch AI Analysis"
+        
+        # Check if we can bypass the dialog (if all selected jobs have clear mappings)
+        can_bypass = False
+        selected_df = filtered[filtered.apply(lambda r: f"{r['title']}-{r['company']}" in st.session_state['selected_jobs'], axis=1)]
+        if not selected_df.empty:
+            resume_options = list(st.session_state.get('resumes', {}).keys())
+            has_all_links = True
+            for _, row in selected_df.iterrows():
+                res_name = get_mapped_resume_name(db, row)
+                if not res_name or res_name not in resume_options:
+                    has_all_links = False
+                    break
+            can_bypass = has_all_links
+
         if st.button(btn_label, type="secondary", use_container_width=True, disabled=(selected_count == 0)):
-            st.session_state['show_batch_analysis_dialog'] = True
+            if can_bypass:
+                # Store the signal to run batch immediately
+                st.session_state['run_batch_now'] = True
+            else:
+                st.session_state['show_batch_analysis_dialog'] = True
             st.rerun()
+
+    # Handle immediate batch run (bypassing dialog)
+    if st.session_state.get('run_batch_now', False):
+        st.session_state['run_batch_now'] = False
+        render_batch_analysis_confirm(selected_df, db, auto_start=True)
 
     if st.session_state.get('show_batch_analysis_dialog', False):
         # Filter specifically selected jobs
@@ -140,7 +211,7 @@ def render_explorer_view(db):
     pending_list = []
     
     for _, row in filtered.iterrows():
-        resume_name = row.get('_role_name') or (list(st.session_state.get('resumes', {}).keys())[0] if st.session_state.get('resumes') else None)
+        resume_name = get_mapped_resume_name(db, row)
         full_job_id = db.generate_job_id(row['title'], row['company'], resume_name)
         if full_job_id in cache and "error" not in cache[full_job_id]:
             analyzed_list.append(row)
@@ -161,10 +232,13 @@ def render_explorer_view(db):
 
         for idx, row in enumerate(jobs):
             job_id = f"{row['title']}-{row['company']}"
-            is_applied = (row.get("link") in st.session_state['applied_jobs'])
+            # Match by title-company, not link (Indeed changes URLs between sessions)
+            title_clean = row['title'].split('\n')[0].strip()
+            base_id = f"{title_clean}-{row['company'].strip()}"
+            is_applied = base_id in st.session_state.get('applied_jobs_ids', set())
             is_selected = job_id in st.session_state['selected_jobs']
             
-            resume_name = row.get('_role_name') or (list(st.session_state.get('resumes', {}).keys())[0] if st.session_state.get('resumes') else None)
+            resume_name = get_mapped_resume_name(db, row)
             full_job_id = db.generate_job_id(row['title'], row['company'], resume_name)
             is_analyzed = full_job_id in cache and "error" not in cache[full_job_id]
 
@@ -181,9 +255,9 @@ def render_explorer_view(db):
             if is_applied: title_display = f"✅ {title_display}"
             row_cols[1].markdown(title_display)
             
-            # Display the resume name used for scouting as sub-text
-            res_label = row.get('_role_name') or row.get('Found_job') or "Default Resume"
-            row_cols[1].caption(f"📄 {res_label}")
+            # Display the actual resume name resolved from history/metadata
+            display_name = get_mapped_resume_name(db, row)
+            row_cols[1].caption(f"📄 {display_name}")
 
             # 3. Company
             row_cols[2].write(row['company'])
@@ -266,48 +340,79 @@ def render_analysis_dialog(job, db):
     # Resume Selection for analysis (Must be before job_id calc for resume-awareness)
     resume_options = list(st.session_state.get('resumes', {}).keys())
     
-    # Auto-select the resume that was used for scouting
+    # Auto-select the resume that was resolved by our mapping logic (the "original" scouted resume)
+    resolved_resume = get_mapped_resume_name(db, job)
     default_index = 0
-    scouted_role = job.get('_role_name') or job.get('Found_job')
+    if resolved_resume in resume_options:
+        default_index = resume_options.index(resolved_resume)
     
-    if scouted_role:
-        for idx, r_name in enumerate(resume_options):
-            # Match exact role name or check if the found_job string is inside the filename
-            if scouted_role == r_name or (isinstance(scouted_role, str) and scouted_role.lower() in r_name.lower()):
-                default_index = idx
-                break
-        
-    selected_resume_key = st.selectbox("Analyze with Resume:", resume_options, index=default_index, key="analyze_resume_sel")
+    # Key MUST be unique per job, otherwise Streamlit remembers stale selections from previous dialogs
+    job_unique_key = f"analyze_resume_sel_{job['title']}_{job['company']}"
+    selected_resume_key = st.selectbox("Analyze with Resume:", resume_options, index=default_index, key=job_unique_key)
     selected_resume_data = st.session_state['resumes'].get(selected_resume_key, {})
+
+    # Detect if user switched to a different resume than the original
+    is_resume_switched = (selected_resume_key != resolved_resume)
 
     # Analysis logic (Resume-aware)
     job_id = db.generate_job_id(job['title'], job['company'], selected_resume_key)
+    original_job_id = db.generate_job_id(job['title'], job['company'], resolved_resume)
 
     # Check if in cache
     cache = db.load_cache()
     is_analyzed = job_id in cache and "error" not in cache[job_id]
+    original_is_analyzed = original_job_id in cache and "error" not in cache[original_job_id]
     analysis_results = cache.get(job_id, {})
 
-    if st.button("🚀 Run/Refresh AI Analysis", type="primary"):
+    # Show resume switch indicator
+    if is_resume_switched:
+        if is_analyzed:
+            st.success(f"✅ Analysis exists for **{selected_resume_key}**. You can re-run to refresh.")
+        elif original_is_analyzed:
+            st.warning(f"⚠️ No analysis found for **{selected_resume_key}**. Showing results from **{resolved_resume}**. Click below to re-analyze with the new resume.")
+            # Fallback: show original results until user re-runs
+            analysis_results = cache.get(original_job_id, {})
+        else:
+            st.info(f"📋 Selected: **{selected_resume_key}**. Click below to run analysis.")
+
+    # Dynamic button label
+    if is_resume_switched and not is_analyzed:
+        btn_label = f"🚀 Run AI Analysis with {selected_resume_key}"
+    else:
+        btn_label = "🚀 Run/Refresh AI Analysis"
+
+    if st.button(btn_label, type="primary"):
         from job_hunter.analysis_crew import JobAnalysisCrew
-        with st.spinner("Brainstorming with LLM..."):
+        with st.spinner(f"Analyzing with **{selected_resume_key}**..."):
             crew = JobAnalysisCrew(job.get('rich_description', ''), selected_resume_data.get('text', ''))
             results = crew.run_analysis(use_browser=True)
             if results and "error" not in results:
                 db.save_cache(job_id, results)
                 st.session_state['job_cache'][job_id] = results
-                st.success("Analysis Complete!")
+                st.success(f"✅ Analysis Complete with **{selected_resume_key}**!")
                 st.rerun()
             else:
                 st.error(f"Analysis failed: {results.get('error', 'Unknown error')}")
 
+    # For display purposes: use the best available results
+    display_results = analysis_results
+    display_analyzed = bool(display_results and "error" not in display_results)
+
+
     # Tabs for results
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["💡 Intel", "📝 Cover Letter", "🎯 ATS Match", "📄 Strategized Resume", "💬 Ask AI"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "💡 Intel", 
+        "📋 Job Description",
+        "📝 Cover Letter", 
+        "🎯 ATS Match", 
+        "📄 Strategized Resume", 
+        "💬 Ask AI"
+    ])
 
     with tab1:
-        if not is_analyzed: st.info("Run AI Analysis first.")
+        if not display_analyzed: st.info("Run AI Analysis first.")
         else:
-            intel = analysis_results.get("company_intel", {})
+            intel = display_results.get("company_intel", {})
             st.write(f"**Mission**: {intel.get('mission', 'N/A')}")
             st.write(f"**HQ**: {intel.get('headquarters', 'N/A')}")
             st.write(f"**Employees**: {intel.get('employees', 'N/A')}")
@@ -315,25 +420,36 @@ def render_analysis_dialog(job, db):
             for f in intel.get('key_facts', []): st.markdown(f"• {f}")
 
     with tab2:
-        if not is_analyzed: st.info("Run AI Analysis first.")
-        else:
-            st.write(f"**Humanization Level:** {analysis_results.get('humanization_score', 0)}%")
-            st.text_area("Cover Letter", analysis_results.get("cover_letter", ""), height=400)
+        st.markdown("### Job Description")
+        jd_text = job.get('rich_description', 'No detailed description available.')
+        st.markdown(jd_text, unsafe_allow_html=True)
 
     with tab3:
-        if not is_analyzed: st.info("Run AI Analysis first.")
+        if not display_analyzed: st.info("Run AI Analysis first.")
         else:
-            ats = analysis_results.get("ats_report", {})
+            if is_resume_switched and not is_analyzed:
+                st.caption(f"⚠️ Showing cover letter from **{resolved_resume}**. Re-run to generate for **{selected_resume_key}**.")
+            st.write(f"**Humanization Level:** {display_results.get('humanization_score', 0)}%")
+            st.text_area("Cover Letter", display_results.get("cover_letter", ""), height=400)
+
+    with tab4:
+        if not display_analyzed: st.info("Run AI Analysis first.")
+        else:
+            if is_resume_switched and not is_analyzed:
+                st.caption(f"⚠️ Showing ATS match from **{resolved_resume}**. Re-run for accurate match with **{selected_resume_key}**.")
+            ats = display_results.get("ats_report", {})
             st.metric("Match Score", f"{ats.get('score', 0)}%")
             st.write("**Missing Skills:**")
             for s in ats.get("missing_skills", []): st.caption(f"❌ {s}")
 
-    with tab4:
-        if not is_analyzed: st.info("Run AI Analysis first.")
+    with tab5:
+        if not display_analyzed: st.info("Run AI Analysis first.")
         else:
+            if is_resume_switched and not is_analyzed:
+                st.caption(f"⚠️ Showing tailored resume from **{resolved_resume}**. Re-run to tailor for **{selected_resume_key}**.")
             c_res1, c_res2 = st.columns([1, 1])
             with c_res1:
-                st.text_area("Tailored Resume", analysis_results.get("tailored_resume", ""), height=600)
+                st.text_area("Tailored Resume", display_results.get("tailored_resume", ""), height=600)
             with c_res2:
                 st.markdown("### Original Resume Preview")
                 if "pdf_bytes" in selected_resume_data:
@@ -343,8 +459,9 @@ def render_analysis_dialog(job, db):
                 else:
                     st.warning("PDF bytes not found in session. Try re-uploading.")
 
-    with tab5:
-        render_chat_tab(job, selected_resume_key, selected_resume_data, analysis_results, db)
+    with tab6:
+        render_chat_tab(job, selected_resume_key, selected_resume_data, display_results, db)
+
 
 def render_chat_tab(job, resume_name, resume_data, analysis_results, db):
     job_id = db.generate_job_id(job['title'], job['company'], resume_name)
@@ -434,114 +551,116 @@ def render_batch_apply_confirm(eligible_jobs, db):
     if st.button("❌ Cancel"):
         st.rerun()
 
-@st.dialog("🧠 Confirm Batch Analysis")
-def render_batch_analysis_confirm(jobs_to_analyze_df, db):
+@st.dialog("🧠 Confirm Batch Analysis", width="large")
+def render_batch_analysis_confirm(jobs_to_analyze_df, db, auto_start=False):
     resume_options = list(st.session_state.get('resumes', {}).keys())
     if not resume_options:
         st.warning("Please upload a resume first.")
         return
-        
-    # Smart Resume Awareness
-    has_mixed_resumes = False
-    all_have_resumes = True
-    resume_names_found = set()
     
-    for idx, row in jobs_to_analyze_df.iterrows():
-        role = row.get('_role_name')
-        if role:
-            resume_names_found.add(role)
-        else:
-            all_have_resumes = False
-            
-    if len(resume_names_found) > 1:
-        has_mixed_resumes = True
-
-    selected_resume_key = None
-    if all_have_resumes and not has_mixed_resumes:
-        # All jobs use the same resume
-        selected_resume_key = list(resume_names_found)[0]
-        st.success(f"📌 Automatically using linked resume: **{selected_resume_key}**")
-    elif all_have_resumes and has_mixed_resumes:
-        # Mixed resumes, but all are tagged
-        st.info("📌 Multiple roles detected. Each job will be analyzed with its **original scouting resume**.")
-        # We still need a fallback for the UI logic below
-        selected_resume_key = list(resume_names_found)[0] 
-    else:
-        # Some are missing, show the selectbox as fallback/override
-        default_index = 0
-        first_job = jobs_to_analyze_df.iloc[0]
-        scouted_role = first_job.get('_role_name') or first_job.get('Found_job')
-        if scouted_role:
-            for idx, r_name in enumerate(resume_options):
-                if scouted_role == r_name or (isinstance(scouted_role, str) and scouted_role.lower() in r_name.lower()):
-                    default_index = idx
-                    break
-        selected_resume_key = st.selectbox("Analyze selected jobs with Resume:", resume_options, index=default_index)
-    
-    # Calculate how many are missing analysis
-    cache = db.load_cache()
+    # Mapping table
+    resume_mapping = {}
     missing_jobs = []
+    cache = db.load_cache()
     
     for idx, row in jobs_to_analyze_df.iterrows():
-        # Check analysis status (Resume-aware check)
-        job_id = db.generate_job_id(row['title'], row['company'], selected_resume_key)
-        # Include if not in cache OR if the cached result is an error
-        if job_id not in cache or "error" in cache.get(job_id, {}):
+        job_id_full = f"{row['title']}-{row['company']}"
+        
+        # Resolve using helper
+        sel_resume = get_mapped_resume_name(db, row)
+        default_idx = resume_options.index(sel_resume) if sel_resume in resume_options else 0
+        
+        if not auto_start:
+            col1, col2 = st.columns([2, 1])
+            col1.write(f"**{row['title']}** ({row['company']})")
+            sel_resume = col2.selectbox("Resume:", resume_options, index=default_idx, key=f"batch_ana_sel_{job_id_full}")
+        
+        resume_mapping[job_id_full] = sel_resume
+
+        # Check if actually missing
+        job_cache_id = db.generate_job_id(row['title'], row['company'], sel_resume)
+        if job_cache_id not in cache or "error" in cache.get(job_cache_id, {}):
             missing_jobs.append(row.to_dict())
-            
-    st.info(f"Out of the **{len(jobs_to_analyze_df)}** selected jobs, **{len(missing_jobs)}** are missing AI Analysis.")
-    
-    if len(missing_jobs) == 0:
-        st.success("All jobs are already processed!")
-        if st.button("Close"):
-            st.session_state['show_batch_analysis_dialog'] = False
-            st.rerun()
+
+    if not auto_start:
+        st.divider()
+        st.info(f"Out of the **{len(jobs_to_analyze_df)}** selected jobs, **{len(missing_jobs)}** require AI Analysis.")
+        
+        if not missing_jobs:
+            st.success("All selected jobs are already analyzed!")
+            if st.button("Close"):
+                st.session_state['show_batch_analysis_dialog'] = False
+                st.rerun()
+            return
+
+    # If auto_start and nothing missing, we can just finish
+    if auto_start and not missing_jobs:
+        st.session_state['show_batch_analysis_dialog'] = False
         return
 
     c1, c2 = st.columns(2)
-    if c1.button("✅ Run Background Batch", type="primary"):
-        resume_data = st.session_state['resumes'].get(selected_resume_key, {})
-        
+    start_triggered = auto_start
+    
+    if not auto_start:
+        if c1.button("✅ Run Background Batch", type="primary"):
+            start_triggered = True
+        if c2.button("❌ Cancel"):
+            st.session_state['show_batch_analysis_dialog'] = False
+            st.rerun()
+
+    if start_triggered:
         progress_bar = st.progress(0)
         status_text = st.empty()
+        log_area = st.empty()
         
         from job_hunter.analysis_crew import JobAnalysisCrew
+        from tools.browser_llm import BrowserLLM
         import time
         
-        with st.spinner("Processing in background..."):
+        # Initialize browser once for the whole batch
+        bot_config = db.load_bot_config()
+        headless = bot_config.get("settings", {}).get("ai_headless", True)
+        provider = os.getenv("BROWSER_LLM_PROVIDER", "ChatGPT")
+        browser_llm = BrowserLLM(provider=provider, profile_name="llm_profile", headless=headless)
+        
+        logs = []
+        def add_log(msg):
+            logs.append(f"- {msg}")
+            log_area.markdown("\n".join(logs[-5:])) # Show last 5 logs
+
+        try:
             for i, job in enumerate(missing_jobs):
-                status_text.text(f"Analyzing: {job['title']} at {job['company']} ({i+1}/{len(missing_jobs)})...")
+                job_full_id = f"{job['title']}-{job['company']}"
+                selected_resume = resume_mapping[job_full_id]
+                resume_data = st.session_state['resumes'].get(selected_resume, {})
+                
+                status_text.text(f"Processing {i+1}/{len(missing_jobs)}: {job['title']}")
+                add_log(f"Starting {job['company']}...")
+                
                 jd = job.get('rich_description') or ""
                 context = f"Title: {job['title']}\nCompany: {job['company']}\nJD: {jd}"
-
-                # Use the job's tagged resume if available, else use the batch-selected one
-                job_resume_key = job.get('_role_name', selected_resume_key)
-                job_resume_data = st.session_state['resumes'].get(job_resume_key, resume_data)
                 
-                crew = JobAnalysisCrew(context, job_resume_data.get('text', ''))
-                # Pass close_after=False to keep session open during batch
-                results = crew.run_analysis(use_browser=True, close_after=False)
+                crew = JobAnalysisCrew(context, resume_data.get('text', ''))
+                # Pass existing browser_llm and clear_chat=True
+                results = crew.run_analysis(use_browser=True, close_after=False, browser_llm=browser_llm, clear_chat=True)
                 
                 if results and "error" not in results:
-                    job_id = db.generate_job_id(job['title'], job['company'], job_resume_key)
-                    db.save_cache(job_id, results)
-                    st.session_state['job_cache'][job_id] = results
+                    job_cache_id = db.generate_job_id(job['title'], job['company'], selected_resume)
+                    db.save_cache(job_cache_id, results)
+                    st.session_state['job_cache'][job_cache_id] = results
+                    add_log(f"✅ Success: {job['company']}")
                 else:
-                    st.toast(f"Skipped {job['company']} (Error). Keep monitoring.", icon="⚠️")
+                    err = results.get('error', 'Unknown Error')
+                    add_log(f"❌ Failed: {job['company']} ({err[:30]}...)")
+                    st.toast(f"Skipped {job['company']}", icon="⚠️")
                 
                 progress_bar.progress((i + 1) / len(missing_jobs))
-                time.sleep(1)  # Brief pause between jobs
-            
-            # Close browser when batch is fully done (only if we processed something)
-            if missing_jobs:
-                from tools.browser_llm import BrowserLLM
-                bl = BrowserLLM(profile_name="llm_profile")
-                bl.close_tab()
+                time.sleep(1)
+        finally:
+            # Always close tab at the end of batch
+            browser_llm.close_tab()
                 
         st.success("Batch Analysis Complete!")
         st.session_state['show_batch_analysis_dialog'] = False
-        st.rerun()
-
-    if c2.button("❌ Cancel"):
-        st.session_state['show_batch_analysis_dialog'] = False
+        st.session_state['run_batch_now'] = False
         st.rerun()

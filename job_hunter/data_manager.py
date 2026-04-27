@@ -62,11 +62,20 @@ class DataManager:
         applied = self.load_applied()
         applied_ids = set(applied.keys())
         applied_links = set()
-        for v in applied.values():
+        for k, v in applied.items():
              details = v.get('job_details', {})
              # Collect various link keys just in case
              lnk = details.get('Web Address') or details.get('link') or details.get('url')
              if lnk: applied_links.add(lnk)
+             # Also build title-company base IDs (without resume suffix)
+             # so scouted jobs match even when applied key has resume name
+             a_title = details.get('title') or details.get('Job Title', '')
+             a_company = details.get('company') or details.get('Company', '')
+             if a_title and a_company:
+                 # Strip newline-duplicated titles (e.g. "Title\nTitle")
+                 a_title_clean = a_title.split('\n')[0].strip()
+                 base_id = f"{a_title_clean}-{a_company.strip()}"
+                 applied_ids.add(base_id)
 
         filtered_list = []
 
@@ -240,25 +249,26 @@ class DataManager:
         scouted = self.load_scouted()
         applied = self.load_applied()
         
-        # Identify jobs to keep (those NOT in applied)
-        # Using composite key Title-Company as ID
-        # applied_keys = set(applied.keys()) 
-        # But applied keys are generated strings. 
-        # DataManager.save_applied uses job_id passed to it. 
-        # In app.py, job_id = f"{row['Job Title']}-{row['Company']}"
-        
-        # So we can reconstruct keys from scouted to check existence
+        # Build a comprehensive set of title-company base IDs from applied jobs
+        applied_base_ids = set()
+        for k, v in applied.items():
+            applied_base_ids.add(k)  # Full key (may include resume suffix)
+            details = v.get('job_details', {})
+            a_title = details.get('title') or details.get('Job Title', '')
+            a_company = details.get('company') or details.get('Company', '')
+            if a_title and a_company:
+                a_title_clean = a_title.split('\n')[0].strip()
+                applied_base_ids.add(f"{a_title_clean}-{a_company.strip()}")
         
         original_count = len(scouted)
         new_scouted = []
         
         for job in scouted:
-            # Reconstruct ID using standardized method
             j_title = job.get('title', 'Unknown')
             j_company = job.get('company', 'Unknown')
             job_id = self.generate_job_id(j_title, j_company)
             
-            if job_id not in applied:
+            if job_id not in applied_base_ids:
                 new_scouted.append(job)
                 
         removed_count = original_count - len(new_scouted)
@@ -604,12 +614,16 @@ class DataManager:
         Returns:
             List of previously used job titles, most recent first
         """
+        history = self.load_all_resume_history()
+        return history.get(resume_filename, [])
+
+    def load_all_resume_history(self):
+        """Loads the entire resume title history as a dictionary."""
         filepath = self._get_resume_history_file()
         if os.path.exists(filepath):
             with open(filepath, "r", encoding="utf-8") as f:
-                history = json.load(f)
-                return history.get(resume_filename, [])
-        return []
+                return json.load(f)
+        return {}
     
     def save_resume_title_history(self, resume_filename, titles):
         """

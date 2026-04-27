@@ -124,12 +124,12 @@ def render_applied_view(db):
         details = data.get('job_details', {})
         grid_data.append({
             "Job ID": jid,
-            "Applied Position": details.get('Job Title', 'N/A'),
-            "Company Name": details.get('Company', 'N/A'),
+            "Applied Position": details.get('Job Title') or details.get('title') or 'N/A',
+            "Company Name": details.get('Company') or details.get('company') or 'N/A',
             "Applied on": data.get('created_at', 'N/A'),
-            "Applied against Job Title": details.get('Found_job', 'N/A'),
-            "Platform": details.get('Platform', 'N/A'),
-            "Link": details.get('Web Address') or details.get('link') or ""
+            "Applied against Job Title": details.get('Found_job') or details.get('found_job') or 'N/A',
+            "Platform": details.get('Platform') or details.get('platform') or 'N/A',
+            "Link": details.get('Web Address') or details.get('link') or details.get('url') or ""
         })
 
     if grid_data:
