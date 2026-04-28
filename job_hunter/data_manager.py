@@ -346,9 +346,34 @@ class DataManager:
 
     def save_cache(self, job_id, results):
         data = self.load_cache()
+        results['_analyzed_at'] = datetime.now().isoformat()
+        # Move this key to the END of the dict so it's the most recent
+        # (Python 3.7+ dicts maintain insertion order)
+        if job_id in data:
+            del data[job_id]
         data[job_id] = results
         with open(CACHE_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=2, ensure_ascii=False)
         return data
+
+    def save_active_resume(self, title, company, resume_name):
+        """Saves which resume is currently active for a given job (title-company)."""
+        base_id = self.generate_job_id(title, company)  # No resume suffix
+        try:
+            with open(os.path.join(DATA_DIR, "active_resumes.json"), "r", encoding="utf-8") as f:
+                mapping = json.load(f)
+        except:
+            mapping = {}
+        mapping[base_id] = resume_name
+        with open(os.path.join(DATA_DIR, "active_resumes.json"), "w", encoding="utf-8") as f:
+            json.dump(mapping, f, indent=2, ensure_ascii=False)
+
+    def load_active_resumes(self):
+        """Loads the mapping of job base_id -> active resume name."""
+        try:
+            with open(os.path.join(DATA_DIR, "active_resumes.json"), "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
 
     # --- PARKED JOBS ---
     def load_parked(self):

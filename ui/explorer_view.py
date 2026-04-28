@@ -8,19 +8,65 @@ from ui.metrics import render_metrics_dashboard
 import os
 
 def get_mapped_resume_name(db, row):
-    """Resolves the best resume filename for a given job row, prioritizing existing analysis."""
+    """Resolves the best resume filename for a given job row, prioritizing the most recent analysis."""
     resumes = st.session_state.get('resumes', {})
-    cache = db.load_cache()
     title = row.get('title', 'Unknown')
     company = row.get('company', 'Unknown')
 
-    # 1. PRIORITY: Check if an analysis already exists in cache for ANY resume
-    # This ensures that if the user manually re-ran analysis with a different resume, 
-    # the UI subtext updates to show THAT resume.
-    for r_name in resumes:
-        job_id = db.generate_job_id(title, company, r_name)
-        if job_id in cache and "error" not in cache[job_id]:
-            return r_name
+    # Build a base_id to match against cache keys
+    base_id = db.generate_job_id(title, company)  # "title-company" without resume suffix
+
+    # 0. TOP PRIORITY: Explicit active resume mapping (set when user runs analysis)
+    active_map = db.load_active_resumes()
+    active = active_map.get(base_id)
+    if active and active in resumes:
+        return active
+
+    cache = db.load_cache()
+
+    # 1. PRIORITY: Find the MOST RECENTLY analyzed resume for this job
+    # Strategy A: Use _analyzed_at timestamps if available (new entries)
+    # Strategy B: Use cache key ORDER (last key = most recent, since save_cache moves to end)
+    latest_resume_ts = None
+    latest_ts = ""
+    last_resume_order = None  # Fallback: last matching key in dict order
+
+    for cache_key, entry in cache.items():
+        if not cache_key.startswith(base_id):
+            continue
+        if "error" in entry:
+            continue
+        
+        # Extract resume name from cache key: "title-company-ResumeName"
+        suffix = cache_key[len(base_id):]  # e.g., "-Sheikh Ali Mateen - Data Analyst"
+        if suffix.startswith("-"):
+            suffix = suffix[1:]  # Remove leading dash
+        
+        # Find matching resume in session
+        matched_resume = None
+        for r_name in resumes:
+            r_stripped = os.path.splitext(r_name)[0]
+            if r_stripped == suffix:
+                matched_resume = r_name
+                break
+        
+        if not matched_resume:
+            continue
+
+        # Track by timestamp (most accurate)
+        ts = entry.get('_analyzed_at', '')
+        if ts and ts > latest_ts:
+            latest_ts = ts
+            latest_resume_ts = matched_resume
+        
+        # Track by dict order (last one wins = most recently saved)
+        last_resume_order = matched_resume
+    
+    # Prefer timestamp-based if available, otherwise use dict order
+    if latest_resume_ts:
+        return latest_resume_ts
+    if last_resume_order:
+        return last_resume_order
 
     # 2. Match on _resume_filename (Original scouting mapping)
     res_file = row.get('_resume_filename')
@@ -43,6 +89,8 @@ def get_mapped_resume_name(db, row):
     
     # 5. Fallback to first resume
     return list(resumes.keys())[0] if resumes else "Default Resume"
+
+
 
 def render_explorer_view(db):
 
@@ -282,13 +330,14 @@ def render_explorer_view(db):
 
             # 3. Save Cover Letter
             if has_cl:
-                if act_cols[2].button("✉️", key=f"save_{job_id}_{idx}_{title_label}", help="Save Cover Letter (PDF)"):
+                if act_cols[2].button("✉️", key=f"save_{job_id}_{idx}_{title_label}", help=f"Save Cover Letter (PDF) — {resume_name}"):
                     from tools.pdf_generator import generate_cover_letter_pdf
                     bot_config = db.load_bot_config()
                     custom_path = bot_config.get("settings", {}).get("cover_letter_path", "data/Cover_Letter.pdf")
                     path = generate_cover_letter_pdf(results["cover_letter"], output_path=custom_path)
                     if path:
-                        st.toast(f"✅ Saved: {path}", icon="📄")
+                        st.toast(f"✅ Saved ({resume_name}): {path}", icon="📄")
+
             else:
                 act_cols[2].button("✉️", key=f"save_disabled_{job_id}_{idx}_{title_label}", help="Analyze first", disabled=True)
 
@@ -364,6 +413,11 @@ def render_analysis_dialog(job, db):
     original_is_analyzed = original_job_id in cache and "error" not in cache[original_job_id]
     analysis_results = cache.get(job_id, {})
 
+    # If analysis exists for selected resume, immediately update the active mapping
+    # so the grid subtext updates even without re-running analysis
+    if is_analyzed:
+        db.save_active_resume(job['title'], job['company'], selected_resume_key)
+
     # Show resume switch indicator
     if is_resume_switched:
         if is_analyzed:
@@ -388,6 +442,7 @@ def render_analysis_dialog(job, db):
             results = crew.run_analysis(use_browser=True)
             if results and "error" not in results:
                 db.save_cache(job_id, results)
+                db.save_active_resume(job['title'], job['company'], selected_resume_key)
                 st.session_state['job_cache'][job_id] = results
                 st.success(f"✅ Analysis Complete with **{selected_resume_key}**!")
                 st.rerun()
@@ -647,6 +702,7 @@ def render_batch_analysis_confirm(jobs_to_analyze_df, db, auto_start=False):
                 if results and "error" not in results:
                     job_cache_id = db.generate_job_id(job['title'], job['company'], selected_resume)
                     db.save_cache(job_cache_id, results)
+                    db.save_active_resume(job['title'], job['company'], selected_resume)
                     st.session_state['job_cache'][job_cache_id] = results
                     add_log(f"✅ Success: {job['company']}")
                 else:

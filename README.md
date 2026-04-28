@@ -1,3 +1,15 @@
+## ⚖️ Legal Disclaimer
+
+> [!IMPORTANT]
+> **Educational Purposes Only**  
+> This project is developed strictly for **educational and research purposes**. It is intended to demonstrate the capabilities of AI agents and web automation techniques. 
+
+- **Terms of Service**: Users are responsible for ensuring their use of this tool complies with the Terms of Service (ToS) of the respective job platforms (LinkedIn, Indeed, Stepstone, Xing, ZipRecruiter).
+- **Compliance**: This tool is **not** intended to bypass security measures or violate legal obligations set forth by job portal providers.
+- **Liability**: The developer assumes no liability for any misuse of this tool or for any account-related actions taken by the platforms in response to automation.
+
+---
+
 # 🚀 CareerCommander(Mini)
 
 **Your AI-Powered Job Hunting Partner.**  
@@ -89,18 +101,6 @@ streamlit run app.py
 *   **"Browser Closed Unexpectedly"**: Ensure you have Chrome installed. If issues persist, try closing all Chrome windows and running again.
 *   **"Ollama Connection Error"**: Make sure Ollama is running (`ollama serve` in a separate terminal).
 *   **"Xing/LinkedIn Login"**: Some sites require login. Use the **"🛠️ Bot Setup (Login)"** tool in the sidebar to open the browser, log in manually once, and then run your missions.
-
----
-
-## ⚖️ Legal Disclaimer
-
-> [!IMPORTANT]
-> **Educational Purposes Only**  
-> This project is developed strictly for **educational and research purposes**. It is intended to demonstrate the capabilities of AI agents and web automation techniques. 
-
-- **Terms of Service**: Users are responsible for ensuring their use of this tool complies with the Terms of Service (ToS) of the respective job platforms (LinkedIn, Indeed, Stepstone, Xing, ZipRecruiter).
-- **Compliance**: This tool is **not** intended to bypass security measures or violate legal obligations set forth by job portal providers.
-- **Liability**: The developer assumes no liability for any misuse of this tool or for any account-related actions taken by the platforms in response to automation.
 
 ---
 

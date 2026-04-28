@@ -39,26 +39,26 @@ class LinkedInOutreach:
         # Simple approach: Search for people with location and 1st degree connection
         # We use the search results page
         base_url = "https://www.linkedin.com/search/results/people/?"
-        params = {
-            "network": '["F"]', # 1st degree
-            "origin": "FACETED_SEARCH"
-        }
-
-        # If location is 'Germany', use geoUrn to be more precise
+        # LinkedIn's frontend parser is buggy and drops parameters if quotes are strictly URL-encoded to %22.
+        # It expects brackets to be encoded (%5B, %5D) but quotes to be literal (").
+        query_parts = [
+            'network=%5B"F"%5D',
+            'origin=FACETED_SEARCH'
+        ]
+        
         if location_name.lower() == "germany":
-            params["geoUrn"] = '["101282230"]'
+            query_parts.append('geoUrn=%5B"101282230"%5D')
             if keywords:
-                params["keywords"] = keywords
+                query_parts.append(f"keywords={urllib.parse.quote(keywords)}")
         elif location_name:
-            # Fallback to keyword location if no geoUrn known
             if keywords:
-                params["keywords"] = f"{keywords} {location_name}"
+                query_parts.append(f"keywords={urllib.parse.quote(keywords + ' ' + location_name)}")
             else:
-                params["keywords"] = location_name
+                query_parts.append(f"keywords={urllib.parse.quote(location_name)}")
         elif keywords:
-            params["keywords"] = keywords
+            query_parts.append(f"keywords={urllib.parse.quote(keywords)}")
 
-        url = base_url + urllib.parse.urlencode(params)
+        url = base_url + "&".join(query_parts)
         logger.info(f"[LinkedIn Outreach] Navigating to: {url}")
         self.driver.get(url)
         self.random_sleep(4, 7)
@@ -66,15 +66,78 @@ class LinkedInOutreach:
         results = []
         scrolled = 0
         while len(results) < limit and scrolled < 3:
-            items = self.driver.find_elements(By.CSS_SELECTOR, ".reusable-search__result-container")
-            for item in items:
+            # Look for any list item that contains a button or link meant for messaging
+            # This bypasses obfuscated classes
+            xpath_msg = "contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'message') or contains(translate(@aria-label, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'message')"
+            items = self.driver.find_elements(By.XPATH, f"//li[.//button[{xpath_msg}]]")
+            
+            if not items:
+                # Fallback if they are not in li tags
+                items = self.driver.find_elements(By.XPATH, f"//div[.//button[{xpath_msg}]]")
+
+            # We might find many nested divs, so we only want the unique buttons. 
+            # A cleaner approach is to find the message buttons directly, then traverse up to get the name.
+            xpath_msg = "contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'message') or contains(translate(@aria-label, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'message')"
+            buttons = self.driver.find_elements(By.XPATH, f"//button[{xpath_msg}] | //a[{xpath_msg}]")
+            
+            for msg_btn in buttons:
                 if len(results) >= limit: break
                 try:
-                    name_elem = item.find_element(By.CSS_SELECTOR, ".entity-result__title-text a span[aria-hidden='true']")
-                    full_name = name_elem.text.strip()
+                    # Ensure the button is actually visible and looks like an action button
+                    if not msg_btn.is_displayed():
+                        continue
+                        
+                    aria_label = msg_btn.get_attribute("aria-label") or ""
+                    
+                    # Extract name
+                    full_name = None
+                    if "Send a message to " in aria_label:
+                        full_name = aria_label.replace("Send a message to ", "").strip()
+                    elif "Message " in aria_label:
+                        full_name = aria_label.replace("Message ", "").strip()
+                    
+                    # Traverse up to the container (li or generic div card) to find the profile link and name if missing
+                    try:
+                        container = msg_btn.find_element(By.XPATH, "./ancestor::li[1]")
+                    except:
+                        try:
+                            # Fallback to the closest div that looks like a card (has a profile link)
+                            container = msg_btn.find_element(By.XPATH, "./ancestor::div[.//a[contains(@href, '/in/')]]")
+                        except:
+                            container = msg_btn
 
-                    link_elem = item.find_element(By.CSS_SELECTOR, ".entity-result__title-text a")
-                    profile_url = link_elem.get_attribute("href").split('?')[0]
+                    if not full_name:
+                        try:
+                            # Try to find the title text element (aria-hidden=true is common)
+                            name_elems = container.find_elements(By.XPATH, ".//a[contains(@href, '/in/')]/span[@aria-hidden='true']")
+                            if name_elems:
+                                full_name = name_elems[0].text.strip()
+                            else:
+                                # Grab the first link text
+                                profile_links = container.find_elements(By.XPATH, ".//a[contains(@href, '/in/')]")
+                                for link in profile_links:
+                                    text = link.text.strip()
+                                    if text and "\n" not in text and "LinkedIn" not in text:
+                                        full_name = text
+                                        break
+                        except:
+                            pass
+                    
+                    if not full_name:
+                        # Absolute fallback, just use the first line of text
+                        full_name = container.text.split('\n')[0].strip()
+
+                    # Avoid "Message" as a name
+                    if full_name.lower() == "message":
+                        continue
+
+                    # Extract Profile URL
+                    profile_url = ""
+                    try:
+                        a_elem = container.find_element(By.XPATH, ".//a[contains(@href, '/in/')]")
+                        profile_url = a_elem.get_attribute("href").split('?')[0]
+                    except:
+                        pass
 
                     # Avoid duplicates in current session
                     if any(r['name'] == full_name for r in results):
@@ -85,21 +148,15 @@ class LinkedInOutreach:
                         logger.info(f"Skipping {full_name} (Already messaged)")
                         continue
 
-                    # Find Message button
-                    try:
-                        msg_btn = item.find_element(By.CSS_SELECTOR, "button[aria-label^='Message']")
-                        results.append({
-                            "name": full_name,
-                            "first_name": self.get_first_name(full_name),
-                            "profile_url": profile_url,
-                            "element": msg_btn
-                        })
-                    except:
-                        # Maybe it's "Connect" or something else if not actually 1st degree or button hidden
-                        continue
+                    results.append({
+                        "name": full_name,
+                        "first_name": self.get_first_name(full_name),
+                        "profile_url": profile_url,
+                        "element": msg_btn
+                    })
 
                 except Exception as e:
-                    logger.info(f"Error parsing connection: {e}")
+                    logger.info(f"Error parsing connection button: {e}")
                     continue
 
             if len(results) < limit:
@@ -195,9 +252,6 @@ class LinkedInOutreach:
 
                 random_wait(1, 2)
 
-                # Mark as messaged in our database
-                self.db.save_messaged_contact(full_name, connection.get('profile_url'))
-
                 if auto_send:
                     # Send button
                     send_btn = self.driver.find_element(By.CSS_SELECTOR, ".msg-form__send-button")
@@ -206,6 +260,9 @@ class LinkedInOutreach:
                         logger.info(f"Sending message to {full_name}")
                         send_btn.click()
                         self.random_sleep(1, 2)
+                        
+                        # Mark as messaged in our database
+                        self.db.save_messaged_contact(full_name, connection.get('profile_url'))
 
                         # Close the message bubble to avoid clutter
                         try:
@@ -218,8 +275,43 @@ class LinkedInOutreach:
                         logger.info(f"Send button disabled for {full_name}")
                         return False
                 else:
-                    logger.info(f"Message prepared for {full_name} (Auto-send is OFF)")
-                    return True
+                    logger.info(f"Message prepared for {full_name}. Waiting for user to click send manually...")
+                    # Wait for user to send (message box becomes empty) or close bubble
+                    sent = False
+                    max_wait = 300 # 5 minutes timeout per contact
+                    elapsed = 0
+                    while elapsed < max_wait:
+                        try:
+                            # If text becomes empty, user hit send
+                            if msg_box.text.strip() == "":
+                                sent = True
+                                break
+                            # If bubble is closed manually by user
+                            if not msg_box.is_displayed():
+                                break
+                        except:
+                            # StaleElementReferenceException means bubble closed
+                            break
+                        
+                        time.sleep(1)
+                        elapsed += 1
+
+                    if sent:
+                        logger.info(f"User sent the message for {full_name}.")
+                        self.db.save_messaged_contact(full_name, connection.get('profile_url'))
+                    else:
+                        logger.info(f"User skipped sending message for {full_name}.")
+
+                    # Clean up: close any open bubbles before moving to next
+                    try:
+                        close_btns = self.driver.find_elements(By.CSS_SELECTOR, "button[class*='msg-overlay-bubble-header__control'][aria-label^='Close']")
+                        for btn in close_btns:
+                            if btn.is_displayed():
+                                btn.click()
+                    except:
+                        pass
+                    
+                    return sent
 
             except Exception as e:
                 logger.info(f"Error in message box: {e}")

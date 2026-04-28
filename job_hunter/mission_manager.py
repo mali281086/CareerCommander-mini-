@@ -490,6 +490,7 @@ class MissionManager:
                         results = crew.run_analysis(components=analysis_components, use_browser=True)
                         if results and "error" not in results:
                             self.db.save_cache(jid, results)
+                            self.db.save_active_resume(job.get('title'), job.get('company'), r_name)
                         else:
                             err_msg = results.get('error', 'Unknown Error')
                             logger.error(f"Analysis failed for {jid}: {err_msg}")
