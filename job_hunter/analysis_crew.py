@@ -122,6 +122,10 @@ STRICT JSON STRUCTURE REQUIRED:
     "score": 85,
     "missing_skills": ["skill1", "skill2"]
   },
+  "fit_report": {
+    "score": 90,
+    "fit_analysis": "Brief reasoning for the fit score."
+  },
 """
         if 'resume' in components:
             prompt += """  "tailored_resume": "### Experience\\n...",
@@ -142,16 +146,32 @@ Specific Instructions:
   [Paragraph 5: Direct closing.]
   Use NO AI transitions like "Furthermore" or "Moreover". Keep it grounded.
 - For 'tailored_resume': Focus on rewriting the Experience section to match JD keywords.
-- For 'ats_report': Give an honest match score from 0-100.
+- For 'ats_report': Give a strict keyword-based ATS match score from 0-100.
+- For 'fit_report': Provide a holistic "Resume Fit" score from 0-100 evaluating how well the candidate's actual experience genuinely aligns with the core requirements of the JD.
 - Output ONLY the JSON object. No conversation.
 """
 
-        response_text = browser_llm.ask(prompt)
+        max_retries = 1
+        for attempt in range(max_retries + 1):
+            response_text = browser_llm.ask(prompt)
 
-        if response_text.startswith("ERROR:"):
-            if close_after:
-                browser_llm.close_tab()
-            return {"error": response_text}
+            if response_text.startswith("ERROR:"):
+                # If it's a hard crash of the browser, try to recreate and retry
+                if "invalid session id" in response_text.lower() or "stacktrace:" in response_text.lower():
+                    if attempt < max_retries:
+                        logger.warning(f"[AnalysisCrew] Browser crash detected: {response_text[:100]}. Retrying ({attempt+1}/{max_retries})...")
+                        # Force close the corrupted driver via BrowserManager
+                        from tools.browser_manager import BrowserManager
+                        BrowserManager().close_driver()
+                        # This will force a new driver to be created on the next iteration
+                        continue
+                
+                if close_after:
+                    browser_llm.close_tab()
+                return {"error": response_text}
+            
+            # If we succeed without an ERROR string, break out of retry loop
+            break
 
         results = self._clean_json(response_text)
         

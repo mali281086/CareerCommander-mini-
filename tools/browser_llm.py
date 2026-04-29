@@ -318,6 +318,13 @@ class BrowserLLM:
             start_time = time.time()
             while time.time() - start_time < timeout:
                 try:
+                    # Check for 'Continue generating' button
+                    continue_btns = self.driver.find_elements(By.XPATH, "//button[contains(., 'Continue generating')]")
+                    if continue_btns and continue_btns[0].is_displayed():
+                        continue_btns[0].click()
+                        time.sleep(2)
+                        continue
+
                     # If we see the 'Stop generating' button, we are definitely still working
                     stop_btns = self.driver.find_elements(By.CSS_SELECTOR, "button[aria-label='Stop generating']")
                     if stop_btns:
@@ -338,19 +345,19 @@ class BrowserLLM:
                     pass
                 time.sleep(1)
 
-            # Extract last response
-            selectors = [
-                "div[data-message-author-role='assistant']",
-                ".markdown.prose",
-                "div.agent-turn"
-            ]
-
-            for selector in selectors:
-                responses = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                if responses:
-                    text = responses[-1].text
-                    if text and len(text) > 10:
-                        return text
+            # Extract last response robustly via JS
+            script = """
+            var responses = Array.from(document.querySelectorAll('div[data-message-author-role="assistant"], .markdown.prose, article[data-testid*="assistant"]'));
+            if (responses.length > 0) {
+                var lastResponse = responses[responses.length - 1];
+                var md = lastResponse.querySelector('.markdown');
+                return md ? md.innerText : lastResponse.innerText;
+            }
+            return "";
+            """
+            text = self.driver.execute_script(script)
+            if text and len(text) > 10:
+                return text
 
             return "Failed to extract response from ChatGPT."
         except Exception as e:

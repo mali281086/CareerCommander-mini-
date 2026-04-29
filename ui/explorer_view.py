@@ -261,22 +261,34 @@ def render_explorer_view(db):
     for _, row in filtered.iterrows():
         resume_name = get_mapped_resume_name(db, row)
         full_job_id = db.generate_job_id(row['title'], row['company'], resume_name)
-        if full_job_id in cache and "error" not in cache[full_job_id]:
+        if full_job_id in cache and "error" not in cache[full_job_id] and "ats_report" in cache[full_job_id]:
             analyzed_list.append(row)
         else:
             pending_list.append(row)
+            
+    # Sort Analyzed Jobs by Fit Score, then ATS Score (Descending)
+    def get_match_score(row):
+        resume_name = get_mapped_resume_name(db, row)
+        full_job_id = db.generate_job_id(row['title'], row['company'], resume_name)
+        cached = cache.get(full_job_id, {})
+        fit = cached.get("fit_report", {}).get("score", 0)
+        ats = cached.get("ats_report", {}).get("score", 0)
+        return (fit, ats)
+        
+    analyzed_list.sort(key=get_match_score, reverse=True)
 
     def render_job_block(jobs, title_label):
         if not jobs: return
         st.markdown(f"### {title_label}")
         
         # Header Row
-        h_cols = st.columns([0.4, 3.2, 1.8, 1.2, 4.4])
+        h_cols = st.columns([0.4, 3.2, 1.8, 1.2, 1.0, 4.2])
         h_cols[0].write("**Sel**")
         h_cols[1].write("**Job Title**")
         h_cols[2].write("**Company**")
-        h_cols[3].write("**Type**")
-        h_cols[4].write("**Actions**")
+        h_cols[3].write("**Fit %**")
+        h_cols[4].write("**Type**")
+        h_cols[5].write("**Actions**")
 
         for idx, row in enumerate(jobs):
             job_id = f"{row['title']}-{row['company']}"
@@ -288,9 +300,10 @@ def render_explorer_view(db):
             
             resume_name = get_mapped_resume_name(db, row)
             full_job_id = db.generate_job_id(row['title'], row['company'], resume_name)
-            is_analyzed = full_job_id in cache and "error" not in cache[full_job_id]
+            is_analyzed = full_job_id in cache and "error" not in cache[full_job_id] and "ats_report" in cache[full_job_id]
+            results = cache.get(full_job_id, {})
 
-            row_cols = st.columns([0.4, 3.2, 1.8, 1.2, 4.4])
+            row_cols = st.columns([0.4, 3.2, 1.8, 1.2, 1.0, 4.2])
             
             # 1. Selection Checkbox
             if row_cols[0].checkbox("Select", value=is_selected, key=f"sel_{job_id}_{idx}_{title_label}", label_visibility="collapsed"):
@@ -310,14 +323,19 @@ def render_explorer_view(db):
             # 3. Company
             row_cols[2].write(row['company'])
 
-            # 4. Type
-            row_cols[3].write("Easy Apply" if row['is_easy_apply'] else "Standard")
+            # 4. Fit %
+            fit_score = "N/A"
+            if is_analyzed and "fit_report" in results:
+                fit_score = f"{results['fit_report'].get('score', 'N/A')}%"
+            row_cols[3].write(fit_score)
 
-            # 5. Actions
-            act_cols = row_cols[4].columns(8)
+            # 5. Type
+            row_cols[4].write("Easy Apply" if row['is_easy_apply'] else "Standard")
+
+            # 6. Actions
+            act_cols = row_cols[5].columns(8)
             
             # 1. AI Analysis
-            results = cache.get(full_job_id, {})
             has_cl = "cover_letter" in results and results["cover_letter"]
             
             ai_icon = "🟢" if is_analyzed else "🔴"
@@ -493,8 +511,16 @@ def render_analysis_dialog(job, db):
             if is_resume_switched and not is_analyzed:
                 st.caption(f"⚠️ Showing ATS match from **{resolved_resume}**. Re-run for accurate match with **{selected_resume_key}**.")
             ats = display_results.get("ats_report", {})
-            st.metric("Match Score", f"{ats.get('score', 0)}%")
-            st.write("**Missing Skills:**")
+            fit = display_results.get("fit_report", {})
+            
+            c_score1, c_score2 = st.columns(2)
+            c_score1.metric("ATS Match", f"{ats.get('score', 0)}%")
+            c_score2.metric("Holistic Fit", f"{fit.get('score', 0)}%")
+            
+            st.write("**Fit Reasoning:**")
+            st.write(fit.get("fit_analysis", "No fit analysis provided."))
+            
+            st.write("**Missing ATS Skills:**")
             for s in ats.get("missing_skills", []): st.caption(f"❌ {s}")
 
     with tab5:
