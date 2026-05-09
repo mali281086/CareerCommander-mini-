@@ -142,17 +142,41 @@ class BrowserLLM:
             # Detect and handle 431 Request Header Fields Too Large or other browser errors
             for _ in range(2): # Try recovery up to twice
                 try:
-                    page_text = self.driver.find_element(By.TAG_NAME, "body").text
-                    if "431" in page_text or "header" in page_text.lower() or "too large" in page_text.lower():
-                        logger.warning("Detected 431 Error (Headers too large). Attempting to clear state and reload...")
+                    # Check both page text and title for error markers
+                    page_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+                    page_title = self.driver.title.lower()
+
+                    if "431" in page_text or "too large" in page_text or "431" in page_title:
+                        logger.warning("Detected 431 Error (Headers too large). Performing deep reset...")
+
+                        # 1. Clear everything
                         self.driver.delete_all_cookies()
-                        self.driver.execute_script("window.localStorage.clear();")
-                        self.driver.execute_script("window.sessionStorage.clear();")
-                        self.driver.refresh()
+                        try:
+                            self.driver.execute_script("window.localStorage.clear();")
+                            self.driver.execute_script("window.sessionStorage.clear();")
+                        except: pass # Might fail on native error pages
+
+                        # 2. Hard navigation to about:blank first to truly clear the view
+                        self.driver.get("about:blank")
+                        time.sleep(1)
+
+                        # 3. Navigate back to provider
+                        url = self.PROVIDERS[self.provider]
+                        if self.provider == "ChatGPT": url = "https://chatgpt.com/?model=auto"
+                        self.driver.get(url)
                         time.sleep(5)
                         continue
                     break
-                except: break
+                except Exception as e:
+                    # If we can't even read the body, might be a hard browser crash or restricted page
+                    if "431" in self.driver.title:
+                         self.driver.delete_all_cookies()
+                         self.driver.get("about:blank")
+                         time.sleep(1)
+                         self.driver.get(self.PROVIDERS[self.provider])
+                         time.sleep(5)
+                         continue
+                    break
 
             self._handle_overlays()
 
@@ -267,10 +291,14 @@ class BrowserLLM:
                 prompt_exists = len(self.driver.find_elements(By.ID, "prompt-textarea")) > 0
                 
                 if not prompt_exists:
-                    if "431" in page_text or "too large" in page_text:
+                    if "431" in page_text or "too large" in page_text or "431" in self.driver.title:
                         logger.warning("Detected 431 Error during prompt. Clearing state and reloading...")
                         self.driver.delete_all_cookies()
-                        self.driver.execute_script("window.localStorage.clear();")
+                        try:
+                            self.driver.execute_script("window.localStorage.clear();")
+                        except: pass
+                        self.driver.get("about:blank")
+                        time.sleep(1)
                         self.driver.get("https://chatgpt.com/?model=auto")
                         time.sleep(5)
                         self._wait_for_page_load()
@@ -286,7 +314,7 @@ class BrowserLLM:
                     if "something went wrong" in page_text:
                         self.driver.refresh()
                         time.sleep(5)
-                
+
                 self._handle_overlays()
             except:
                 pass
