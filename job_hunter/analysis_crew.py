@@ -16,34 +16,55 @@ class JobAnalysisCrew:
             return {}
 
         try:
-            # 1. Try finding Markdown code blocks (most reliable)
-            match = re.search(r"```(?:json)?(.*?)```", text, re.DOTALL)
-            if match:
-                inner_text = match.group(1).strip()
-                try:
-                    return json.loads(inner_text)
-                except:
-                    pass
+            # 1. Try finding Markdown code blocks - take the LAST one to avoid prompt examples
+            matches = re.findall(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+            if matches:
+                for inner_text in reversed(matches):
+                    try:
+                        data = json.loads(inner_text.strip())
+                        if isinstance(data, dict) and len(data) >= 2:
+                            return data
+                    except:
+                        pass
 
-            # 2. Find the largest valid JSON object by searching for { }
+            # 2. String-aware brace counting to extract JSON from dirty text
+            # Search from the end to find the last valid JSON block
             starts = [i for i, char in enumerate(text) if char == '{']
-            for start in starts:
+            for start in reversed(starts):
                 count = 0
+                in_string = False
+                escape = False
+                
                 for i in range(start, len(text)):
-                    if text[i] == '{':
-                        count += 1
-                    elif text[i] == '}':
-                        count -= 1
-
-                    if count == 0:
-                        potential_json = text[start:i+1]
-                        try:
-                            data = json.loads(potential_json)
-                            if isinstance(data, dict):
-                                return data
-                        except:
-                            pass
-                        break
+                    c = text[i]
+                    
+                    if escape:
+                        escape = False
+                        continue
+                        
+                    if c == '\\\\':
+                        escape = True
+                        continue
+                        
+                    if c == '"':
+                        in_string = not in_string
+                        continue
+                        
+                    if not in_string:
+                        if c == '{': count += 1
+                        elif c == '}': count -= 1
+                        
+                        if count == 0:
+                            potential_json = text[start:i+1]
+                            try:
+                                # Cleanup trailing commas before parsing
+                                potential_json = re.sub(r",\s*\}", "}", potential_json)
+                                data = json.loads(potential_json)
+                                if isinstance(data, dict) and len(data) >= 2:
+                                    return data
+                            except:
+                                pass
+                            break
 
             # 3. Final fallback
             start = text.find('{')
@@ -146,24 +167,26 @@ Specific Instructions:
   [Paragraph 5: Direct closing.]
   Use NO AI transitions like "Furthermore" or "Moreover". Keep it grounded.
 - For 'tailored_resume': Focus on rewriting the Experience section to match JD keywords.
-- For 'ats_report': Give a strict keyword-based ATS match score from 0-100.
-- For 'fit_report': Provide a holistic "Resume Fit" score from 0-100 evaluating how well the candidate's actual experience genuinely aligns with the core requirements of the JD.
+- For 'ats_report': Perform a binary keyword match. If a mandatory skill or tool from the JD is not explicitly found in the resume, it is MISSING. Score is the percentage of JD 'must-have' keywords present in the resume.
+- For 'fit_report': You are an EXTREMELY STRICT, cynical hiring manager. Provide a "Resume Fit" score from 0-100. Be brutal: if core requirements (years of experience, specific senior-level tools, or industry domain) are missing, penalize heavily. A score of 80+ should be rare. In 'fit_analysis', explicitly list the candidate's biggest weaknesses or gaps compared to the JD.
 - Output ONLY the JSON object. No conversation.
 """
 
         max_retries = 1
         for attempt in range(max_retries + 1):
-            response_text = browser_llm.ask(prompt)
+            response_text = browser_llm.ask(prompt, timeout=300)
 
             if response_text.startswith("ERROR:"):
                 # If it's a hard crash of the browser, try to recreate and retry
-                if "invalid session id" in response_text.lower() or "stacktrace:" in response_text.lower():
+                if "invalid session id" in response_text.lower() or "stacktrace:" in response_text.lower() or "element not interactable" in response_text.lower():
                     if attempt < max_retries:
                         logger.warning(f"[AnalysisCrew] Browser crash detected: {response_text[:100]}. Retrying ({attempt+1}/{max_retries})...")
                         # Force close the corrupted driver via BrowserManager
                         from tools.browser_manager import BrowserManager
                         BrowserManager().close_driver()
-                        # This will force a new driver to be created on the next iteration
+                        # Recreate BrowserLLM with a completely fresh driver
+                        browser_llm = BrowserLLM(provider=provider, profile_name="llm_profile", headless=headless)
+                        browser_llm.new_chat()
                         continue
                 
                 if close_after:
@@ -190,7 +213,10 @@ Specific Instructions:
         # Trigger PDF generation if cover letter was returned
         if "cover_letter" in results and results["cover_letter"]:
             from tools.pdf_generator import generate_cover_letter_pdf
-            generate_cover_letter_pdf(results["cover_letter"])
+            # Load custom path from settings
+            bot_config = db.load_bot_config()
+            custom_path = bot_config.get("settings", {}).get("cover_letter_path")
+            generate_cover_letter_pdf(results["cover_letter"], output_path=custom_path)
 
         if close_after:
             browser_llm.close_tab()

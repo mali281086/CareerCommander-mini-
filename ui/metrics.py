@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime
 import altair as alt
 
-def render_metrics_dashboard(current_df, applied_dict, parked_count=0):
+def render_metrics_dashboard(current_df, applied_dict, parked_count=0, analyzed_count=0):
     """
     Renders Dashboard 2.1: Cards on Top, Stacked Timeline, Toggle-only.
     """
@@ -84,12 +84,13 @@ def render_metrics_dashboard(current_df, applied_dict, parked_count=0):
         """
 
 
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
     with m1: st.markdown(card("Current Jobs", count_scouted), unsafe_allow_html=True)
     with m2: st.markdown(card("Applied Jobs", count_applied), unsafe_allow_html=True)
     with m3: st.markdown(card("Parked Jobs", parked_count), unsafe_allow_html=True)
-    with m4: st.markdown(card("Total Jobs", count_total + parked_count), unsafe_allow_html=True)
-    with m5: st.markdown(card("Avg job applied / day", avg_msg), unsafe_allow_html=True)
+    with m4: st.markdown(card("AI Analyzed", analyzed_count), unsafe_allow_html=True)
+    with m5: st.markdown(card("Total Jobs", count_total + parked_count), unsafe_allow_html=True)
+    with m6: st.markdown(card("Avg applied / day", avg_msg), unsafe_allow_html=True)
 
     st.markdown("###")
 

@@ -355,6 +355,64 @@ class DataManager:
         with open(CACHE_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=2, ensure_ascii=False)
         return data
 
+    def delete_cache_for_job(self, title, company):
+        """Deletes ALL cache entries for a job (across all resume variations)."""
+        base_id = self.generate_job_id(title, company)
+        cache = self.load_cache()
+        keys_to_delete = [k for k in cache if k.startswith(base_id)]
+        if keys_to_delete:
+            for k in keys_to_delete:
+                del cache[k]
+            with open(CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump(cache, f, indent=2, ensure_ascii=False)
+        return len(keys_to_delete)
+
+    def clean_database(self):
+        """Wipes scouted jobs and orphaned cache entries. Keeps only Applied + Parked job data."""
+        # 1. Clear scouted jobs
+        self.clear_scouted_jobs()
+
+        # 2. Build protected cache key prefixes from Applied + Parked
+        protected_prefixes = set()
+        
+        # From Applied
+        applied = self.load_applied()
+        for job_id in applied.keys():
+            protected_prefixes.add(job_id)
+        
+        # From Parked
+        parked = self.load_parked()
+        for p in parked:
+            p_title = p.get('title')
+            p_company = p.get('company')
+            if p_title and p_company:
+                base = self.generate_job_id(p_title, p_company)
+                protected_prefixes.add(base)
+
+        # 3. Filter cache: keep only entries whose key starts with a protected prefix
+        cache = self.load_cache()
+        original_count = len(cache)
+        cleaned_cache = {}
+        for key, value in cache.items():
+            is_protected = any(key.startswith(prefix) for prefix in protected_prefixes)
+            if is_protected:
+                cleaned_cache[key] = value
+        
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cleaned_cache, f, indent=2, ensure_ascii=False)
+
+        # 4. Clean active_resumes.json
+        try:
+            active = self.load_active_resumes()
+            cleaned_active = {k: v for k, v in active.items() if any(k.startswith(p) for p in protected_prefixes)}
+            with open(os.path.join(DATA_DIR, "active_resumes.json"), "w", encoding="utf-8") as f:
+                json.dump(cleaned_active, f, indent=2, ensure_ascii=False)
+        except:
+            pass
+
+        removed_count = original_count - len(cleaned_cache)
+        return {"scouted_cleared": True, "cache_entries_removed": removed_count, "cache_entries_kept": len(cleaned_cache)}
+
     def save_active_resume(self, title, company, resume_name):
         """Saves which resume is currently active for a given job (title-company)."""
         base_id = self.generate_job_id(title, company)  # No resume suffix

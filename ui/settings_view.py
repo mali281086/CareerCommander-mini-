@@ -15,14 +15,15 @@ def render_settings_view(db):
 
     st.divider()
 
-    # Tab layout
-    tab_answers, tab_unknown, tab_add, tab_behavior, tab_blacklist, tab_selectors = st.tabs([
+    tab_answers, tab_unknown, tab_add, tab_behavior, tab_profile, tab_blacklist, tab_selectors, tab_test = st.tabs([
         "📝 My Answers",
         "❓ Unknown Questions",
         "➕ Add New",
         "🤖 Bot Behavior",
+        "👤 User Profile",
         "🚫 Blacklist",
-        "🛠️ Advanced Selectors"
+        "🛠️ Advanced Selectors",
+        "🧪 Test Mode"
     ])
 
     with tab_answers:
@@ -128,9 +129,11 @@ def render_settings_view(db):
         
         # Cover Letter Path Setting
         st.subheader("📄 Document Export Settings")
-        current_path = bot_config.get("settings", {}).get("cover_letter_path", "data/Cover_Letter.pdf")
+        default_path = r"Cover_Letter.pdf"
+        current_path = bot_config.get("settings", {}).get("cover_letter_path", default_path)
         new_path = st.text_input("Cover Letter Save Path", value=current_path, 
-                                 help="Where the PDF cover letter will be saved. Use .pdf extension.")
+                                 placeholder=r"e.g. D:\Documents\MyJobs\Cover_Letter.pdf",
+                                 help="Where the PDF cover letter will be saved. Ensure the folder exists and use .pdf extension.")
         
         if new_path != current_path:
             bot_config["settings"]["cover_letter_path"] = new_path
@@ -140,6 +143,46 @@ def render_settings_view(db):
 
         st.divider()
         st.caption("Note: These settings affect how the AI Analysis and Auto-Apply engines interact with your browser.")
+
+    with tab_profile:
+        st.subheader("👤 User Profile (For Cover Letters)")
+        st.caption("This information is embedded directly into your generated Cover Letter PDFs.")
+
+        if "profile" not in bot_config:
+            bot_config["profile"] = {
+                "name": "",
+                "address": "",
+                "email": "",
+                "cell": "",
+                "linkedin": "",
+                "github": ""
+            }
+
+        prof = bot_config["profile"]
+        c_p1, c_p2 = st.columns(2)
+        new_name = c_p1.text_input("Full Name", value=prof.get("name", ""))
+        new_address = c_p2.text_input("Address", value=prof.get("address", ""))
+        
+        c_p3, c_p4 = st.columns(2)
+        new_email = c_p3.text_input("Email", value=prof.get("email", ""))
+        new_cell = c_p4.text_input("Phone / Cell", value=prof.get("cell", ""))
+        
+        c_p5, c_p6 = st.columns(2)
+        new_linkedin = c_p5.text_input("LinkedIn URL", value=prof.get("linkedin", ""))
+        new_github = c_p6.text_input("GitHub URL", value=prof.get("github", ""))
+
+        if st.button("💾 Save Profile", type="primary", use_container_width=True):
+            bot_config["profile"] = {
+                "name": new_name,
+                "address": new_address,
+                "email": new_email,
+                "cell": new_cell,
+                "linkedin": new_linkedin,
+                "github": new_github
+            }
+            db.save_bot_config(bot_config)
+            st.success("✅ Profile Saved!")
+            st.rerun()
 
     with tab_blacklist:
         st.subheader("🚫 Global Blacklist")
@@ -195,3 +238,83 @@ def render_settings_view(db):
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Failed to save selectors: {e}")
+
+    with tab_test:
+        st.subheader("🧪 Single-Link Test Mode")
+        st.caption("Run a full scrape and AI analysis mission on a single URL. Data is saved temporarily for troubleshooting.")
+
+        c_t1, c_t2 = st.columns(2)
+        test_platform = c_t1.selectbox("Platform", ["LinkedIn", "Xing", "Indeed", "Stepstone", "ZipRecruiter"])
+        
+        resumes = st.session_state.get('resumes', {})
+        resume_options = list(resumes.keys())
+        test_resume = c_t2.selectbox("Resume Context", resume_options) if resume_options else None
+        
+        c_t3, c_t4 = st.columns(2)
+        test_title = c_t3.text_input("Job Title (for AI Context)", "Test Job Title")
+        test_company = c_t4.text_input("Company (for AI Context)", "Test Company")
+        
+        test_link = st.text_input("Job Link URL", placeholder="https://www.linkedin.com/jobs/view/...")
+        
+        if st.button("🚀 Run Test Mission", type="primary", use_container_width=True):
+            if not test_link:
+                st.error("Please provide a job link.")
+            elif not test_resume:
+                st.error("Please configure at least one resume in Settings.")
+            else:
+                from job_hunter.scout import Scout
+                from job_hunter.analysis_crew import JobAnalysisCrew
+                import json
+                from pathlib import Path
+                
+                scout = Scout()
+                if test_platform not in scout.scrapers:
+                    st.error(f"Scraper for {test_platform} not initialized.")
+                else:
+                    status_box = st.empty()
+                    
+                    try:
+                        # 1. Scrape
+                        status_box.info(f"🕵️ Scraping details from {test_platform}...")
+                        scraper = scout.scrapers[test_platform]
+                        details = scraper.fetch_details(test_link)
+                        
+                        if not details or not details.get('description'):
+                            status_box.error("❌ Failed to extract description from the provided link.")
+                        else:
+                            # 2. AI Analysis
+                            status_box.info("🧠 Running AI Analysis...")
+                            desc = details.get('description')
+                            context = f"Title: {test_title}\nCompany: {test_company}\nJD: {desc}"
+                            resume_text = resumes[test_resume].get('text', '')
+                            
+                            crew = JobAnalysisCrew(context, resume_text, profile_name="default")
+                            # Fetch components from session state like mission manager does
+                            components = ["ats_report", "humanization_score", "company_intel", "cover_letter"]
+                            analysis_results = crew.run_analysis(components=components, use_browser=True)
+                            
+                            # 3. Save & Show
+                            output_data = {
+                                "title": test_title,
+                                "company": test_company,
+                                "link": test_link,
+                                "platform": test_platform,
+                                "scraped_details": details,
+                                "ai_analysis": analysis_results
+                            }
+                            
+                            test_file = Path("data/test_job_data.json")
+                            test_file.parent.mkdir(exist_ok=True)
+                            with open(test_file, 'w', encoding='utf-8') as f:
+                                json.dump(output_data, f, indent=2, ensure_ascii=False)
+                                
+                            status_box.success("✅ Test Mission Complete! Results saved to `data/test_job_data.json`")
+                            
+                            with st.expander("Show Test Results", expanded=True):
+                                st.json(output_data)
+                                
+                    except Exception as e:
+                        status_box.error(f"❌ Test failed: {e}")
+                    finally:
+                        from tools.browser_manager import BrowserManager
+                        BrowserManager().close_all_drivers()

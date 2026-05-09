@@ -31,20 +31,22 @@ class CareerAdvisor:
             return []
 
         try:
-            # 1. Try finding Markdown code blocks
-            match = re.search(r"```(?:json)?(.*?)```", text, re.DOTALL)
-            if match:
-                inner_text = match.group(1).strip()
-                try:
-                    parsed = json.loads(inner_text)
-                    if isinstance(parsed, list):
-                        return [str(x) for x in parsed]
-                except:
-                    pass
+            # 1. Try finding Markdown code blocks - take the LAST one (response) to avoid prompt examples
+            matches = re.findall(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+            if matches:
+                for inner_text in reversed(matches):
+                    try:
+                        parsed = json.loads(inner_text.strip())
+                        if isinstance(parsed, list) and len(parsed) > 0:
+                            if not ("Title 1" in parsed and "Title 2" in parsed):
+                                return [str(x) for x in parsed]
+                    except:
+                        pass
 
-            # 2. Find the largest valid JSON array [...]
+            # 2. Find the largest valid JSON array [...], searching from bottom up
+            # to avoid picking up example arrays from the prompt text
             starts = [i for i, char in enumerate(text) if char == '[']
-            for start in starts:
+            for start in reversed(starts):
                 count = 0
                 for i in range(start, len(text)):
                     if text[i] == '[':
@@ -58,7 +60,10 @@ class CareerAdvisor:
                             # Cleanup trailing commas before parsing
                             potential_json = re.sub(r",\s*\]", "]", potential_json)
                             data = json.loads(potential_json)
-                            if isinstance(data, list):
+                            if isinstance(data, list) and len(data) > 0:
+                                # Ensure we don't return the example ["Title 1", "Title 2"]
+                                if "Title 1" in data and "Title 2" in data:
+                                    continue
                                 return [str(x) for x in data]
                         except:
                             pass
@@ -90,7 +95,8 @@ RESUME:
 
 OUTPUT ONLY THE JSON ARRAY.
 """
-            content = llm.ask(prompt)
+            # ']' signals the end of a JSON array like ["Title 1", "Title 2"]
+            content = llm.ask(prompt, done_signal=']')
 
             logger.info(f"ADVISOR RAW RESPONSE: {content}")
 
@@ -131,7 +137,8 @@ RESUME:
 
 OUTPUT ONLY THE MESSAGE CONTENT. NO PREAMBLE.
 """
-            content = llm.ask(prompt)
+            # Outreach is plain text — any non-trivial content signals completion
+            content = llm.ask(prompt, done_signal='.')
             # Remove any quotes or preamble if LLM added them
             content = content.strip().strip('"').strip("'")
             return content

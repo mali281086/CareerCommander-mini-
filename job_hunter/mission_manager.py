@@ -503,7 +503,7 @@ class MissionManager:
                     logger.warning(f"Skipping analysis for {jid}: No description found (length: {len(scraped_jd)})")
                     self.db.save_cache(jid, {"error": "No description found", "status": "skipped"})
 
-                time.sleep(random.uniform(2, 4))
+                time.sleep(random.uniform(1, 2))
 
             # Pop and save
             self.progress.analysis_backlog.pop(0)

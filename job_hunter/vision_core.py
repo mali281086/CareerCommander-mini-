@@ -1,9 +1,13 @@
 import os
 import json
 import time
-import google.generativeai as genai
+try:
+    import google.generativeai as genai
+    from PIL import Image
+except ImportError:
+    genai = None
+    Image = None
 from tools.logger import logger
-from PIL import Image
 import io
 
 # Reduce prompt size slightly by removing fluff and focusing on strictness

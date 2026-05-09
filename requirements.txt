@@ -6,13 +6,10 @@ pdfplumber
 
 # Browser Automation
 selenium
-webdriver-manager
 undetected-chromedriver
-setuptools
 
 # AI & Languages
 langdetect
 PyYAML
 google-generativeai
 pillow
-fpdf2

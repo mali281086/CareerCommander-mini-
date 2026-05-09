@@ -159,9 +159,24 @@ class LinkedInScraper(BaseScraper):
 
         # Expand description if needed
         try:
-            expand_btn = self.driver.find_element(By.CSS_SELECTOR, "button.jobs-description__footer-button")
-            self.driver.execute_script("arguments[0].click();", expand_btn)
-            self.random_sleep(1, 1.5)
+            expand_btn_selectors = [
+                "button.jobs-description__footer-button",
+                "button.show-more-less-html__button",
+                "button[aria-label*='see more']",
+                "button[aria-label*='See more']",
+                "button[aria-label*='mehr anzeigen']",
+                "button[aria-label*='Mehr anzeigen']",
+                ".jobs-description__container button"
+            ]
+            for sel in expand_btn_selectors:
+                try:
+                    expand_btn = self.driver.find_element(By.CSS_SELECTOR, sel)
+                    if expand_btn.is_displayed():
+                        self.driver.execute_script("arguments[0].click();", expand_btn)
+                        self.random_sleep(1, 1.5)
+                        break
+                except:
+                    pass
         except: pass
 
         details = {
@@ -194,7 +209,14 @@ class LinkedInScraper(BaseScraper):
         # Description
         try:
             desc_el = None
-            potential_classes = ["jobs-description__content", "job-details-jobs-unified-top-card__primary-description", "job-details"]
+            potential_classes = [
+                "jobs-description__content", 
+                "job-details-jobs-unified-top-card__primary-description", 
+                "job-details",
+                "jobs-box__html-content",
+                "show-more-less-html__markup",
+                "jobs-description-content__text"
+            ]
             for cls in potential_classes:
                 try:
                     el = self.driver.find_element(By.CLASS_NAME, cls)

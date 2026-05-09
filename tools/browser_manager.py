@@ -59,6 +59,12 @@ class BrowserManager:
         if headless:
             options.add_argument("--headless")
             options.add_argument("--window-size=1920,1080")
+            
+        # Windows stability arguments
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--remote-debugging-port=0") # Auto-assign to avoid conflicts
 
         try:
             # undetected_chromedriver automatically bypasses most bot detection
@@ -66,7 +72,8 @@ class BrowserManager:
                 driver = uc.Chrome(
                     options=options,
                     user_data_dir=user_data_dir,
-                    headless=headless
+                    headless=headless,
+                    use_subprocess=True
                 )
             except Exception as e:
                 # If there is a version mismatch, try to extract the user's Chrome version from the error
@@ -93,17 +100,30 @@ class BrowserManager:
                         options=new_options,
                         user_data_dir=user_data_dir,
                         headless=headless,
-                        version_main=major_version
+                        version_main=major_version,
+                        use_subprocess=True
                     )
-                elif "chrome not reachable" in error_msg or "cannot connect to chrome" in error_msg:
-                    logger.warning(f"Detected locked zombie Chrome process for {profile_name}. Attempting to kill it...")
+                elif any(x in error_msg.lower() for x in ["chrome not reachable", "cannot connect to chrome", "failed to write prefs file", "devtoolsactiveport"]):
+                    logger.warning(f"Detected locked or corrupt Chrome process for {profile_name}. Attempting to kill it...")
                     # Automatically hunt and terminate stranded Chrome instances holding this specific profile
                     import subprocess
                     import time
                     ps_cmd = f"Get-CimInstance Win32_Process | Where-Object {{ $_.Name -eq 'chrome.exe' -and $_.CommandLine -match '{profile_name}' }} | Invoke-CimMethod -MethodName Terminate"
                     subprocess.run(["powershell", "-command", ps_cmd], capture_output=True, text=True)
+                    
+                    # Also delete lock files manually
+                    lock_files = [
+                        os.path.join(user_data_dir, "SingletonLock"),
+                        os.path.join(user_data_dir, "DevToolsActivePort"),
+                        os.path.join(user_data_dir, "Default", "Preferences"), # Force reset if corrupt
+                    ]
+                    for lf in lock_files:
+                        try:
+                            if os.path.exists(lf): os.remove(lf)
+                        except: pass
+                        
                     time.sleep(2)  # Give OS time to free file locks
-                    logger.info("Retrying driver launch after zombie cleanup...")
+                    logger.info("Retrying driver launch after zombie and lock-file cleanup...")
                     
                     new_options = uc.ChromeOptions()
                     new_options.add_argument("--start-maximized")
@@ -228,15 +248,29 @@ class BrowserManager:
         except Exception as e:
             logger.error(f"Failed to load cookies: {e}")
 
+    def is_driver_alive(self):
+        """Check if the current driver is still responsive."""
+        if self._driver is None:
+            return False
+        try:
+            self._driver.title
+            return True
+        except:
+            return False
+
     def close_driver(self, profile_name=None):
         """Close the browser. profile_name accepted for compatibility."""
         if self._driver:
             try:
                 self.save_cookies()
+            except:
+                pass
+            try:
                 self._driver.quit()
             except:
                 pass
             self._driver = None
+            self._current_profile = None
 
     def close_all_drivers(self):
         """Alias for close_driver — single driver only."""

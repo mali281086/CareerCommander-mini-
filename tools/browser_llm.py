@@ -128,6 +128,11 @@ class BrowserLLM:
         """Closes the tab used for analysis if it's still open.
         If it's the last tab, it stays open to avoid exiting the browser process."""
         try:
+            # First check if the driver is still alive
+            if not self.bm.is_driver_alive():
+                self.tab_handle = None
+                return
+                
             handles = self.driver.window_handles
             if self.tab_handle and self.tab_handle in handles:
                 if len(handles) > 1:
@@ -140,8 +145,10 @@ class BrowserLLM:
                 else:
                     # Last tab - navigate to about:blank to clear the view but keep process alive
                     self.driver.get("about:blank")
+            self.tab_handle = None
         except Exception as e:
             logger.info(f"Error closing tab: {e}")
+            self.tab_handle = None
 
     def quit(self):
         """FORCE closes the entire browser associated with this LLM instance."""
@@ -150,67 +157,45 @@ class BrowserLLM:
         except Exception as e:
             logger.info(f"Error quitting browser: {e}")
 
-    def close_tab(self):
-        """Closes the current tab and resets handle."""
-        if self.tab_handle and self.driver:
-            try:
-                self.driver.switch_to.window(self.tab_handle)
-                self.driver.close()
-                self.tab_handle = None
-                # Switch to first remaining handle if any
-                if self.driver.window_handles:
-                    self.driver.switch_to.window(self.driver.window_handles[0])
-            except:
-                pass
+
 
     def new_chat(self):
         """Attempts to start a new chat session to clear context."""
-        self._ensure_tab()
         try:
-            if self.provider == "ChatGPT":
-                # Click the sidebar "New chat" button or use shortcut
-                # Shortcut Ctrl+Shift+O sometimes works but clicking is safer
-                selectors = [
-                    "a[href='/']", # Often the sidebar link
-                    "button[aria-label='New chat']",
-                    "div[data-testid='new-chat-button']",
-                    "nav a.flex.py-3.px-3"
-                ]
-                for sel in selectors:
-                    btns = self.driver.find_elements(By.CSS_SELECTOR, sel)
-                    for btn in btns:
-                        if btn.is_displayed():
-                            btn.click()
-                            time.sleep(2)
-                            return True
-                # Fallback: Refresh page
-                self.driver.refresh()
-                self._wait_for_page_load()
+            # Safely open a new tab first so the browser doesn't die when we close the old one
+            self.driver.execute_script("window.open('');")
+            new_handle = self.driver.window_handles[-1]
             
+            # Close the old tab safely
+            if self.tab_handle and self.tab_handle in self.driver.window_handles:
+                self.driver.switch_to.window(self.tab_handle)
+                self.driver.close()
+            
+            # Switch to the fresh tab
+            self.driver.switch_to.window(new_handle)
+            self.tab_handle = new_handle
+            
+            if self.provider == "ChatGPT":
+                self.driver.get("https://chatgpt.com/")
             elif self.provider == "Gemini":
-                # Gemini has a "+" or "New chat" in sidebar
-                selectors = [
-                    "button[aria-label='New chat']",
-                    "a[href='/app']",
-                    "div.new-chat-button"
-                ]
-                for sel in selectors:
-                    btns = self.driver.find_elements(By.CSS_SELECTOR, sel)
-                    for btn in btns:
-                        if btn.is_displayed():
-                            btn.click()
-                            time.sleep(2)
-                            return True
-                self.driver.refresh()
-                self._wait_for_page_load()
+                self.driver.get("https://gemini.google.com/app")
+            else:
+                self.driver.get("https://copilot.microsoft.com/")
+                
+            time.sleep(2)
+            self._handle_cookies()
+            return True
         except Exception as e:
-            logger.info(f"Failed to start new chat: {e}")
-            self.driver.refresh()
-            self._wait_for_page_load()
+            logger.warning(f"Failed to start new chat via tab cycle: {e}")
+            pass
         return False
 
-    def ask(self, prompt, timeout=120):
-        """Sends prompt and waits for response."""
+    def ask(self, prompt, timeout=120, done_signal=None):
+        """Sends prompt and waits for response.
+        
+        done_signal: a string that must appear in the AI response to consider it complete.
+                     Defaults to '"status"' for job analysis JSON. Pass ']' for JSON array responses.
+        """
         self._ensure_tab()
 
         # Pre-check for login wall, but only if we can't find the prompt area
@@ -227,7 +212,7 @@ class BrowserLLM:
              return f"ERROR: Browser is stuck on a login/auth page ({current_url}). Please log in using the 'Login to AI' button in the sidebar."
 
         if self.provider == "ChatGPT":
-            return self._ask_chatgpt(prompt, timeout)
+            return self._ask_chatgpt(prompt, timeout, done_signal=done_signal)
         elif self.provider == "Gemini":
             return self._ask_gemini(prompt, timeout)
         elif self.provider == "Copilot":
@@ -235,7 +220,10 @@ class BrowserLLM:
 
         return "Provider not implemented."
 
-    def _ask_chatgpt(self, prompt, timeout):
+    def _ask_chatgpt(self, prompt, timeout, done_signal=None):
+        # Default done_signal for job analysis JSON. Callers can override (e.g. ']' for plain arrays).
+        if done_signal is None:
+            done_signal = '"status"'
         try:
             # Check if user is on the logged-out ChatGPT screen
             # Check if user is stuck on a join/login screen without a prompt box
@@ -281,87 +269,114 @@ class BrowserLLM:
             # Use JS to set value for large prompts (faster and more reliable)
             self.driver.execute_script("""
                 var el = arguments[0];
-                if (el.tagName === 'TEXTAREA') {
-                    el.value = arguments[1];
-                } else {
-                    el.innerText = arguments[1];
-                }
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.focus();
+                document.execCommand('selectAll', false, null);
+                document.execCommand('delete', false, null);
+                document.execCommand('insertText', false, arguments[1]);
             """, text_area, prompt)
 
             time.sleep(1)
 
-            # Try multiple ways to send
-            sent = False
-            send_selectors = [
-                "button[data-testid='send-button']",
-                "button[aria-label='Send message']",
-                "button.absolute.bottom-1.5"
-            ]
+            # Force focus before sending
+            self.driver.execute_script("arguments[0].focus();", text_area)
+            time.sleep(0.5)
 
-            for sel in send_selectors:
-                try:
-                    btn = self.driver.find_element(By.CSS_SELECTOR, sel)
-                    if btn.is_enabled():
-                        btn.click()
-                        sent = True
-                        break
-                except: pass
+            # Try to click the send button via JS (immune to interactable errors)
+            sent = self.driver.execute_script("""
+                var btns = document.querySelectorAll("button[data-testid='send-button'], button[aria-label*='Send']");
+                for(var i=0; i<btns.length; i++) {
+                    if(!btns[i].disabled) {
+                        btns[i].click();
+                        return true;
+                    }
+                }
+                return false;
+            """)
 
             if not sent:
-                text_area.send_keys(Keys.ENTER)
+                try:
+                    text_area.send_keys(Keys.ENTER)
+                except:
+                    pass # If this fails, we will timeout and retry
 
-            time.sleep(2)
-
-            # Wait for response to finish
+            # Wait for response to finish: page text length stops growing for 3 seconds
             start_time = time.time()
+            last_len = 0
+            stable_count = 0
             while time.time() - start_time < timeout:
                 try:
-                    # Check for 'Continue generating' button
+                    # Click 'Continue generating' if it appears
                     continue_btns = self.driver.find_elements(By.XPATH, "//button[contains(., 'Continue generating')]")
                     if continue_btns and continue_btns[0].is_displayed():
                         continue_btns[0].click()
                         time.sleep(2)
+                        stable_count = 0
                         continue
 
-                    # If we see the 'Stop generating' button, we are definitely still working
-                    stop_btns = self.driver.find_elements(By.CSS_SELECTOR, "button[aria-label='Stop generating']")
-                    if stop_btns:
-                        time.sleep(2)
-                        continue
-
-                    # If send button is visible and enabled, we might be done
-                    send_btns = self.driver.find_elements(By.CSS_SELECTOR, "button[data-testid='send-button']")
-                    if send_btns and send_btns[0].is_enabled():
-                        # Check if the last assistant message has stopped growing
-                        responses = self.driver.find_elements(By.CSS_SELECTOR, "div[data-message-author-role='assistant']")
-                        if responses:
-                            last_text = responses[-1].text
-                            time.sleep(3)
-                            if responses[-1].text == last_text:
+                    # Fast exit: ChatGPT generation finishes when the stop button disappears
+                    # and either a new send button appears or the response contains our done_signal
+                    is_generating = self.driver.execute_script("""
+                        return document.querySelector("button[aria-label='Stop generating'], button[data-testid='stop-button']") !== null;
+                    """)
+                    
+                    if not is_generating and stable_count > 0:
+                        # Check if done signal is in the last response
+                        if done_signal:
+                            has_signal = self.driver.execute_script(f"""
+                                var resps = document.querySelectorAll('.markdown');
+                                if (resps.length > 0) {{
+                                    return resps[resps.length - 1].innerText.includes('{done_signal}');
+                                }}
+                                return false;
+                            """)
+                            if has_signal:
                                 break
+
+                    # Fallback: Get the full visible page text length
+                    cur_len = self.driver.execute_script("return document.body.innerText.length;")
+                    if cur_len == last_len and cur_len > 200:
+                        stable_count += 1
+                        if stable_count >= 3:  # Stable for 3 consecutive checks (~6s) → done
+                            break
+                    else:
+                        stable_count = 0
+                    last_len = cur_len
                 except:
                     pass
-                time.sleep(1)
+                time.sleep(2)
 
-            # Extract last response robustly via JS
-            script = """
-            var responses = Array.from(document.querySelectorAll('div[data-message-author-role="assistant"], .markdown.prose, article[data-testid*="assistant"]'));
-            if (responses.length > 0) {
-                var lastResponse = responses[responses.length - 1];
-                var md = lastResponse.querySelector('.markdown');
-                return md ? md.innerText : lastResponse.innerText;
-            }
-            return "";
-            """
-            text = self.driver.execute_script(script)
-            if text and len(text) > 10:
-                return text
+            # Attempt to extract pure code block content first (most reliable for JSON)
+            code_text = self.driver.execute_script("""
+                var codes = document.querySelectorAll('code');
+                if (codes.length > 0) {
+                    return codes[codes.length - 1].textContent;
+                }
+                return "";
+            """)
+            
+            if code_text and len(code_text) > 10 and done_signal in code_text:
+                return code_text
 
-            return "Failed to extract response from ChatGPT."
+            # Fallback to the last markdown response block
+            md_text = self.driver.execute_script("""
+                var resps = document.querySelectorAll('.markdown');
+                if (resps.length > 0) {
+                    return resps[resps.length - 1].innerText;
+                }
+                return "";
+            """)
+            
+            if md_text and len(md_text) > 10:
+                return md_text
+
+            # Absolute fallback
+            page_text = self.driver.execute_script("return document.body.innerText;")
+            if page_text and len(page_text) > 10:
+                return page_text
+
+            return "ERROR: Failed to extract response from ChatGPT."
         except Exception as e:
-            return f"Error interacting with ChatGPT: {e}"
+            return f"ERROR: Error interacting with ChatGPT: {e}"
 
     def _ask_gemini(self, prompt, timeout):
         try:
@@ -386,12 +401,14 @@ class BrowserLLM:
             if not prompt_div:
                 prompt_div = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.prompt-textarea-wrapper div[contenteditable='true']")))
 
-            self.driver.execute_script("""
+            script = """
                 var el = arguments[0];
-                el.innerText = arguments[1];
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-            """, prompt_div, prompt)
+                el.focus();
+                document.execCommand('selectAll', false, null);
+                document.execCommand('delete', false, null);
+                document.execCommand('insertText', false, arguments[1]);
+            """
+            self.driver.execute_script(script, prompt_div, prompt)
 
             time.sleep(1)
 
@@ -425,37 +442,39 @@ class BrowserLLM:
                         time.sleep(2)
                         continue
 
-                    # Check if response tools (copy, share) or new prompt area is ready
-                    tools = self.driver.find_elements(By.CSS_SELECTOR, "div.response-tools, div.actions-container")
-                    if tools:
-                        # Check if text stopped changing
-                        responses = self.driver.find_elements(By.CSS_SELECTOR, "model-response")
-                        if responses:
-                            last_text = responses[-1].text
-                            time.sleep(3)
-                            if responses[-1].text == last_text:
-                                break
+                    # Poll length of last model-response
+                    current_len = self.driver.execute_script(
+                        "var m = document.querySelectorAll('model-response, message-content'); "
+                        "return m.length ? m[m.length-1].textContent.length : 0;"
+                    )
+                    time.sleep(3)
+                    new_len = self.driver.execute_script(
+                        "var m = document.querySelectorAll('model-response, message-content'); "
+                        "return m.length ? m[m.length-1].textContent.length : 0;"
+                    )
+                    if current_len == new_len and current_len > 10:
+                        break
                 except:
                     pass
                 time.sleep(1)
 
-            selectors = [
-                "div.message-content",
-                "model-response div.content",
-                ".markdown",
-                "div[class*='response-container']"
-            ]
+            # Extract last response robustly via JS
+            script = """
+            var responses = Array.from(document.querySelectorAll('model-response, message-content, .markdown, div[class*="response-container"]'));
+            if (responses.length > 0) {
+                var lastResponse = responses[responses.length - 1];
+                var content = lastResponse.querySelector('.content') || lastResponse;
+                return content.innerText;
+            }
+            return "";
+            """
+            text = self.driver.execute_script(script)
+            if text and len(text) > 10:
+                return text
 
-            for selector in selectors:
-                responses = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                if responses:
-                    text = responses[-1].text
-                    if text and len(text) > 10:
-                        return text
-
-            return "Failed to extract response from Gemini."
+            return "ERROR: Failed to extract response from Gemini."
         except Exception as e:
-            return f"Error interacting with Gemini: {e}"
+            return f"ERROR: Error interacting with Gemini: {e}"
 
     def _ask_copilot(self, prompt, timeout):
         try:
@@ -483,13 +502,10 @@ class BrowserLLM:
 
             self.driver.execute_script("""
                 var el = arguments[0];
-                if (el.tagName === 'TEXTAREA') {
-                    el.value = arguments[1];
-                } else {
-                    el.innerText = arguments[1];
-                }
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.focus();
+                document.execCommand('selectAll', false, null);
+                document.execCommand('delete', false, null);
+                document.execCommand('insertText', false, arguments[1]);
             """, text_area, prompt)
 
             time.sleep(1)
@@ -523,33 +539,39 @@ class BrowserLLM:
                     stop = self.driver.find_elements(By.CSS_SELECTOR, "button#stop-button")
 
                     if not stop and (new_topic or time.time() - start_time > 10):
-                        # Ensure content is there
-                        responses = self.driver.find_elements(By.CSS_SELECTOR, "div.message-content")
-                        if responses:
-                            last_text = responses[-1].text
-                            time.sleep(4)
-                            if responses[-1].text == last_text and len(last_text) > 10:
-                                break
+                        current_len = self.driver.execute_script(
+                            "var m = document.querySelectorAll('div.message-content'); "
+                            "return m.length ? m[m.length-1].textContent.length : 0;"
+                        )
+                        time.sleep(4)
+                        new_len = self.driver.execute_script(
+                            "var m = document.querySelectorAll('div.message-content'); "
+                            "return m.length ? m[m.length-1].textContent.length : 0;"
+                        )
+                        if current_len == new_len and current_len > 10:
+                            break
                 except:
                     pass
                 time.sleep(1)
 
-            # Extract Copilot response
-            selectors = [
-                "div.ac-container",
-                "div.message-content",
-                "div.attribution-container"
-            ]
+            # Extract Copilot response via JS
+            script = """
+            var selectors = ["div.ac-container", "div.message-content", "div.attribution-container"];
+            for (var i = 0; i < selectors.length; i++) {
+                var responses = Array.from(document.querySelectorAll(selectors[i]));
+                if (responses.length > 0) {
+                    for (var j = responses.length - 1; j >= 0; j--) {
+                        var text = responses[j].innerText;
+                        if (text && text.length > 50) return text;
+                    }
+                }
+            }
+            return "";
+            """
+            text = self.driver.execute_script(script)
+            if text and len(text) > 10:
+                return text
 
-            for selector in selectors:
-                responses = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                if responses:
-                    # Copilot responses are often in a list
-                    for res in reversed(responses):
-                        text = res.text
-                        if text and len(text) > 50:
-                            return text
-
-            return "Failed to extract response from Copilot."
+            return "ERROR: Failed to extract response from Copilot."
         except Exception as e:
-            return f"Error interacting with Copilot: {e}"
+            return f"ERROR: Error interacting with Copilot: {e}"
