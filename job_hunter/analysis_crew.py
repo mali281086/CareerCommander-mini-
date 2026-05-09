@@ -90,7 +90,7 @@ class JobAnalysisCrew:
             logger.info(f"DEBUG: JSON CLEAN FAILED: {e}")
             return {}
 
-    def run_analysis(self, components=None, use_browser=True, close_after=True, browser_llm=None, clear_chat=True):
+    def run_analysis(self, components=None, use_browser=True, close_after=True, browser_llm=None, clear_chat=True, analysis_id=None):
         """Runs the analysis using a browser-based LLM instead of API."""
         if components is None:
             components = ['intel', 'cover_letter', 'ats', 'resume']
@@ -116,8 +116,15 @@ class JobAnalysisCrew:
         if clear_chat:
             browser_llm.new_chat()
 
+        # Unique Analysis ID to prevent LLM from being "lazy" and referring to previous context
+        import uuid
+        if analysis_id is None:
+            analysis_id = str(uuid.uuid4())[:8]
+
         # Construct a combined prompt
         prompt = f"""
+ANALYSIS_ID: {analysis_id}
+
 I need you to perform a job analysis based on the following Job Description and my Resume.
 
 JOB DESCRIPTION:
@@ -180,11 +187,12 @@ Specific Instructions:
 - For 'ats_report': Perform a binary keyword match. If a mandatory skill or tool from the JD is not explicitly found in the resume, it is MISSING. Score is the percentage of JD 'must-have' keywords present in the resume.
 - For 'fit_report': You are an EXTREMELY STRICT, cynical hiring manager. Provide a "Resume Fit" score from 0-100. Be brutal: if core requirements (years of experience, specific senior-level tools, or industry domain) are missing, penalize heavily. A score of 80+ should be rare. In 'fit_analysis', explicitly list the candidate's biggest weaknesses or gaps compared to the JD.
 - Output ONLY the JSON object. No conversation.
+- DO NOT use "..." or "refer to previous" placeholders. You MUST provide the full content for every field.
 """
 
-        max_retries = 1
+        max_retries = 2
         for attempt in range(max_retries + 1):
-            response_text = browser_llm.ask(prompt, timeout=300)
+            response_text = browser_llm.ask(prompt, timeout=400)
 
             if response_text.startswith("ERROR:"):
                 # If it's a hard crash of the browser, try to recreate and retry
@@ -208,11 +216,16 @@ Specific Instructions:
 
         results = self._clean_json(response_text)
         
-        # Check for "lazy" responses where AI uses "..." placeholders
+        # Check for "lazy" or empty responses and retry once if needed
+        is_empty = not results or (isinstance(results, dict) and len(results) <= 1 and "status" in results)
         lazy_count = response_text.count("...")
-        if lazy_count > 5 and len(response_text) < 1000:
-            logger.warning(f"[AnalysisCrew] AI response seems lazy (many ...). Snippet: {response_text[:100]}")
-            # We could retry here, but for now we log it and let it pass if it's valid JSON
+        is_lazy = lazy_count > 5 and len(response_text) < 1000
+
+        if (is_empty or is_lazy) and not close_after:
+             logger.warning(f"[AnalysisCrew] Response was {'empty' if is_empty else 'lazy'}. Retrying with new chat...")
+             browser_llm.new_chat()
+             response_text = browser_llm.ask(prompt, timeout=400)
+             results = self._clean_json(response_text)
 
         if not results or (isinstance(results, dict) and len(results) <= 1 and "status" in results):
             snippet = response_text[:200].replace('\n', ' ')

@@ -92,36 +92,58 @@ class BrowserLLM:
         self.driver.switch_to.window(self.tab_handle)
         self._wait_for_page_load()
 
+    def _handle_overlays(self):
+        """Internal helper to clear common ChatGPT/Gemini overlays and banners."""
+        try:
+            # 1. Cookies
+            self._handle_cookies()
+
+            # 2. ChatGPT specific overlays
+            if self.provider == "ChatGPT":
+                # "Start chatting" button for guests
+                start_btns = self.driver.find_elements(By.XPATH, "//button[contains(., 'Start chatting')]")
+                if start_btns:
+                    start_btns[0].click()
+                    time.sleep(1)
+
+                # "Join ChatGPT" Close button
+                join_close = self.driver.find_elements(By.CSS_SELECTOR, "button[aria-label='Close']")
+                if join_close:
+                    join_close[0].click()
+                    time.sleep(1)
+
+                # Stay in guest mode / dismiss login prompts
+                stay_btns = self.driver.find_elements(By.XPATH, "//button[contains(., 'Stay in guest mode')]")
+                if stay_btns:
+                    stay_btns[0].click()
+                    time.sleep(1)
+
+            # 3. Gemini specific overlays
+            elif self.provider == "Gemini":
+                chat_now = self.driver.find_elements(By.XPATH, "//span[contains(text(), 'Chat now')]")
+                if chat_now:
+                    chat_now[0].click()
+                    time.sleep(1)
+        except:
+            pass
+
     def _wait_for_page_load(self):
         """Waits for the LLM page to load specifically for prompt area."""
         try:
-            wait = WebDriverWait(self.driver, 15)
+            wait = WebDriverWait(self.driver, 20)
+            self._handle_overlays()
+
             if self.provider == "ChatGPT":
-                # Handle the "Start chatting" button that appears for guest users
-                try:
-                    start_btns = self.driver.find_elements(By.XPATH, "//button[contains(., 'Start chatting')]")
-                    if start_btns:
-                        start_btns[0].click()
-                        time.sleep(2)
-                except: pass
                 wait.until(EC.presence_of_element_located((By.ID, "prompt-textarea")))
             elif self.provider == "Gemini":
-                # Handle Gemini guest screen if needed
-                try:
-                    chat_now = self.driver.find_elements(By.XPATH, "//span[contains(text(), 'Chat now')]")
-                    if chat_now:
-                        chat_now[0].click()
-                        time.sleep(2)
-                except: pass
                 wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[contenteditable='true']")))
             elif self.provider == "Copilot":
                 wait.until(EC.presence_of_element_located((By.TAG_NAME, "textarea")))
 
-            # Brief pause for animations and cookie banners
+            # Brief extra pause for stable interaction
             time.sleep(2)
-            self._handle_cookies()
-        except:
-            # Fallback to hard sleep if wait fails
+        except Exception as e:
+            logger.info(f"Page load wait timed out or failed: {e}")
             time.sleep(5)
 
     def close_tab(self):
@@ -160,30 +182,35 @@ class BrowserLLM:
 
 
     def new_chat(self):
-        """Attempts to start a new chat session to clear context."""
+        """Attempts to start a new chat session by opening a fresh tab and closing the old one."""
         try:
             # Safely open a new tab first so the browser doesn't die when we close the old one
-            self.driver.execute_script("window.open('');")
+            self.driver.execute_script("window.open('about:blank');")
             new_handle = self.driver.window_handles[-1]
             
-            # Close the old tab safely
-            if self.tab_handle and self.tab_handle in self.driver.window_handles:
-                self.driver.switch_to.window(self.tab_handle)
-                self.driver.close()
+            # Close ALL other tabs for this provider to prevent context leakage or confusion
+            url = self.PROVIDERS[self.provider]
+            # If ChatGPT, use the specific new chat URL
+            if self.provider == "ChatGPT":
+                url = "https://chatgpt.com/?model=auto"
+
+            handles = list(self.driver.window_handles)
+            for handle in handles:
+                if handle == new_handle: continue
+                try:
+                    self.driver.switch_to.window(handle)
+                    current_url = self.driver.current_url
+                    if "chatgpt.com" in current_url or "gemini.google.com" in current_url or "about:blank" in current_url or "data:" in current_url:
+                         if len(self.driver.window_handles) > 1:
+                            self.driver.close()
+                except: pass
             
             # Switch to the fresh tab
             self.driver.switch_to.window(new_handle)
             self.tab_handle = new_handle
             
-            if self.provider == "ChatGPT":
-                self.driver.get("https://chatgpt.com/")
-            elif self.provider == "Gemini":
-                self.driver.get("https://gemini.google.com/app")
-            else:
-                self.driver.get("https://copilot.microsoft.com/")
-                
-            time.sleep(2)
-            self._handle_cookies()
+            self.driver.get(url)
+            self._wait_for_page_load()
             return True
         except Exception as e:
             logger.warning(f"Failed to start new chat via tab cycle: {e}")
@@ -191,12 +218,11 @@ class BrowserLLM:
         return False
 
     def ask(self, prompt, timeout=120, done_signal=None):
-        """Sends prompt and waits for response.
-        
-        done_signal: a string that must appear in the AI response to consider it complete.
-                     Defaults to '"status"' for job analysis JSON. Pass ']' for JSON array responses.
-        """
+        """Sends prompt and waits for response."""
         self._ensure_tab()
+
+        # Consistent check for overlays before each prompt
+        self._handle_overlays()
 
         # Pre-check for login wall, but only if we can't find the prompt area
         current_url = self.driver.current_url.lower()

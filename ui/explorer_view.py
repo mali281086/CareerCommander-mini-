@@ -280,7 +280,7 @@ def render_explorer_view(db):
                         
                         try:
                             crew = JobAnalysisCrew(context, resume_data.get('text', ''))
-                            # Use clear_chat=True to avoid "laziness" from previous context
+                            # clear_chat=True ensures each job in the batch starts fresh
                             results = crew.run_analysis(use_browser=True, browser_llm=browser_llm, close_after=False, clear_chat=True)
 
                             if results and "error" not in results:
@@ -294,7 +294,8 @@ def render_explorer_view(db):
                                 st.write(f"❌ Failed: {job['company']} ({err[:30]}...)")
                         except Exception as e:
                             st.write(f"❌ Error on {job['company']}: {e}")
-                        time.sleep(1)
+                        # Small stabilizing delay between jobs
+                        time.sleep(2)
                 finally:
                     browser_llm.close_tab()
                 status.update(label="✅ Batch Analysis Complete!", state="complete")
@@ -792,7 +793,8 @@ def render_batch_analysis_confirm(jobs_to_analyze_df, db):
                     st.toast(f"Skipped {job['company']}", icon="⚠️")
                 
                 progress_bar.progress((i + 1) / len(jobs_to_process))
-                time.sleep(1)
+                # Stabilizing delay between jobs
+                time.sleep(3)
 
         except Exception as e:
             st.error(f"Batch Analysis aborted due to error: {e}")
