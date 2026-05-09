@@ -254,44 +254,49 @@ def render_explorer_view(db):
         
         # Execute batch right here instead of opening an empty dialog
         resume_options = list(st.session_state.get('resumes', {}).keys())
-        cache = db.load_cache()
-        missing_jobs = []
+        jobs_to_run = []
         for idx, row in selected_df.iterrows():
             sel_resume = get_mapped_resume_name(db, row)
-            job_cache_id = db.generate_job_id(row['title'], row['company'], sel_resume)
-            if job_cache_id not in cache or "error" in cache.get(job_cache_id, {}) or "ats_report" not in cache.get(job_cache_id, {}):
-                missing_jobs.append((row.to_dict(), sel_resume))
+            jobs_to_run.append((row.to_dict(), sel_resume))
                 
-        if not missing_jobs:
-            st.success("✅ All selected jobs are already analyzed!")
-        else:
-            with st.status(f"🧠 Running Batch Analysis for {len(missing_jobs)} jobs...", expanded=True) as status:
+        if jobs_to_run:
+            with st.status(f"🧠 Running Batch Analysis for {len(jobs_to_run)} jobs...", expanded=True) as status:
                 from job_hunter.analysis_crew import JobAnalysisCrew
+                from tools.browser_llm import BrowserLLM
                 import time
                 
-                for i, (job, sel_resume) in enumerate(missing_jobs):
-                    st.write(f"Processing {i+1}/{len(missing_jobs)}: {job['title']} at {job['company']}")
-                    resume_data = st.session_state['resumes'].get(sel_resume, {})
-                    
-                    jd = job.get('rich_description') or ""
-                    context = f"Title: {job['title']}\nCompany: {job['company']}\nJD: {jd}"
-                    
-                    try:
-                        crew = JobAnalysisCrew(context, resume_data.get('text', ''))
-                        results = crew.run_analysis(use_browser=True)
+                bot_config = db.load_bot_config()
+                headless = bot_config.get("settings", {}).get("ai_headless", True)
+                browser_llm = BrowserLLM(provider="ChatGPT", profile_name="llm_profile", headless=headless)
+
+                try:
+                    for i, (job, sel_resume) in enumerate(jobs_to_run):
+                        st.write(f"Processing {i+1}/{len(jobs_to_run)}: {job['title']} at {job['company']}")
+                        resume_data = st.session_state['resumes'].get(sel_resume, {})
+
+                        # JD Fallback matches single analysis mode
+                        jd = job.get('rich_description') or job.get('description', '')
+                        context = f"Title: {job['title']}\nCompany: {job['company']}\nJD: {jd}"
                         
-                        if results and "error" not in results:
-                            job_cache_id = db.generate_job_id(job['title'], job['company'], sel_resume)
-                            db.save_cache(job_cache_id, results)
-                            db.save_active_resume(job['title'], job['company'], sel_resume)
-                            st.session_state['job_cache'] = db.load_cache()
-                            st.write(f"✅ Success: {job['company']}")
-                        else:
-                            err = results.get('error', 'Unknown Error')
-                            st.write(f"❌ Failed: {job['company']} ({err[:30]}...)")
-                    except Exception as e:
-                        st.write(f"❌ Error on {job['company']}: {e}")
-                    time.sleep(1)
+                        try:
+                            crew = JobAnalysisCrew(context, resume_data.get('text', ''))
+                            # Use clear_chat=True to avoid "laziness" from previous context
+                            results = crew.run_analysis(use_browser=True, browser_llm=browser_llm, close_after=False, clear_chat=True)
+
+                            if results and "error" not in results:
+                                job_cache_id = db.generate_job_id(job['title'], job['company'], sel_resume)
+                                db.save_cache(job_cache_id, results)
+                                db.save_active_resume(job['title'], job['company'], sel_resume)
+                                st.session_state['job_cache'] = db.load_cache()
+                                st.write(f"✅ Success: {job['company']}")
+                            else:
+                                err = results.get('error', 'Unknown Error')
+                                st.write(f"❌ Failed: {job['company']} ({err[:30]}...)")
+                        except Exception as e:
+                            st.write(f"❌ Error on {job['company']}: {e}")
+                        time.sleep(1)
+                finally:
+                    browser_llm.close_tab()
                 status.update(label="✅ Batch Analysis Complete!", state="complete")
             st.rerun()
 
@@ -706,8 +711,7 @@ def render_batch_analysis_confirm(jobs_to_analyze_df, db):
     
     # Mapping table
     resume_mapping = {}
-    missing_jobs = []
-    cache = db.load_cache()
+    jobs_to_process = []
     
     for idx, row in jobs_to_analyze_df.iterrows():
         job_id_full = f"{row['title']}-{row['company']}"
@@ -721,21 +725,11 @@ def render_batch_analysis_confirm(jobs_to_analyze_df, db):
         sel_resume = col2.selectbox("Resume:", resume_options, index=default_idx, key=f"batch_ana_sel_{job_id_full}")
         
         resume_mapping[job_id_full] = sel_resume
-
-        # Check if actually missing
-        job_cache_id = db.generate_job_id(row['title'], row['company'], sel_resume)
-        if job_cache_id not in cache or "error" in cache.get(job_cache_id, {}) or "ats_report" not in cache.get(job_cache_id, {}):
-            missing_jobs.append(row.to_dict())
+        jobs_to_process.append(row.to_dict())
 
     st.divider()
-    st.info(f"Out of the **{len(jobs_to_analyze_df)}** selected jobs, **{len(missing_jobs)}** require AI Analysis.")
+    st.info(f"Ready to analyze **{len(jobs_to_process)}** jobs.")
     
-    if not missing_jobs:
-        st.success("All selected jobs are already analyzed!")
-        if st.button("Close"):
-            st.rerun()
-        return
-
     c1, c2 = st.columns(2)
     start_triggered = False
     
@@ -750,6 +744,7 @@ def render_batch_analysis_confirm(jobs_to_analyze_df, db):
         log_area = st.empty()
         
         from job_hunter.analysis_crew import JobAnalysisCrew
+        from tools.browser_llm import BrowserLLM
         import time
         
         logs = []
@@ -757,20 +752,33 @@ def render_batch_analysis_confirm(jobs_to_analyze_df, db):
             logs.append(f"- {msg}")
             log_area.markdown("\n".join(logs[-5:])) # Show last 5 logs
 
+        # Reuse single browser session for batch to be faster/more reliable
+        bot_config = db.load_bot_config()
+        headless = bot_config.get("settings", {}).get("ai_headless", True)
+        provider = os.getenv("BROWSER_LLM_PROVIDER", "ChatGPT")
+        browser_llm = BrowserLLM(provider=provider, profile_name="llm_profile", headless=headless)
+
         try:
-            for i, job in enumerate(missing_jobs):
+            for i, job in enumerate(jobs_to_process):
                 job_full_id = f"{job['title']}-{job['company']}"
                 selected_resume = resume_mapping[job_full_id]
                 resume_data = st.session_state['resumes'].get(selected_resume, {})
                 
-                status_text.text(f"Processing {i+1}/{len(missing_jobs)}: {job['title']}")
+                status_text.text(f"Processing {i+1}/{len(jobs_to_process)}: {job['title']}")
                 add_log(f"Starting {job['company']}...")
                 
-                jd = job.get('rich_description') or ""
+                # JD Fallback matches single analysis mode
+                jd = job.get('rich_description') or job.get('description', '')
                 context = f"Title: {job['title']}\nCompany: {job['company']}\nJD: {jd}"
                 
                 crew = JobAnalysisCrew(context, resume_data.get('text', ''))
-                results = crew.run_analysis(use_browser=True)
+                # Use clear_chat=True for every job to ensure full results (matching single analysis mode)
+                results = crew.run_analysis(
+                    use_browser=True,
+                    browser_llm=browser_llm,
+                    close_after=False,
+                    clear_chat=True
+                )
                 
                 if results and "error" not in results:
                     job_cache_id = db.generate_job_id(job['title'], job['company'], selected_resume)
@@ -783,11 +791,13 @@ def render_batch_analysis_confirm(jobs_to_analyze_df, db):
                     add_log(f"❌ Failed: {job['company']} ({err[:30]}...)")
                     st.toast(f"Skipped {job['company']}", icon="⚠️")
                 
-                progress_bar.progress((i + 1) / len(missing_jobs))
+                progress_bar.progress((i + 1) / len(jobs_to_process))
                 time.sleep(1)
 
         except Exception as e:
             st.error(f"Batch Analysis aborted due to error: {e}")
+        finally:
+            browser_llm.close_tab()
                 
         st.success("Batch Analysis Complete!")
         if st.button("Close"):

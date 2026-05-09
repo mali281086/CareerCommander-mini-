@@ -208,6 +208,12 @@ Specific Instructions:
 
         results = self._clean_json(response_text)
         
+        # Check for "lazy" responses where AI uses "..." placeholders
+        lazy_count = response_text.count("...")
+        if lazy_count > 5 and len(response_text) < 1000:
+            logger.warning(f"[AnalysisCrew] AI response seems lazy (many ...). Snippet: {response_text[:100]}")
+            # We could retry here, but for now we log it and let it pass if it's valid JSON
+
         if not results or (isinstance(results, dict) and len(results) <= 1 and "status" in results):
             snippet = response_text[:200].replace('\n', ' ')
             logger.error(f"[AnalysisCrew] Failed to parse meaningful JSON. Raw response snippet: {snippet}")
