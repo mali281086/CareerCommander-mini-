@@ -100,23 +100,30 @@ class BrowserLLM:
 
             # 2. ChatGPT specific overlays
             if self.provider == "ChatGPT":
-                # "Start chatting" button for guests
-                start_btns = self.driver.find_elements(By.XPATH, "//button[contains(., 'Start chatting')]")
-                if start_btns:
-                    start_btns[0].click()
-                    time.sleep(1)
+                # Handle various guest mode/login prompts
+                overlay_selectors = [
+                    "//button[contains(., 'Start chatting')]",
+                    "//button[contains(., 'Stay in guest mode')]",
+                    "//button[contains(., 'Dismiss')]",
+                    "//div[@role='dialog']//button[aria-label='Close']",
+                    "//button[contains(., 'Maybe later')]"
+                ]
 
-                # "Join ChatGPT" Close button
-                join_close = self.driver.find_elements(By.CSS_SELECTOR, "button[aria-label='Close']")
-                if join_close:
-                    join_close[0].click()
-                    time.sleep(1)
+                for xpath in overlay_selectors:
+                    try:
+                        btns = self.driver.find_elements(By.XPATH, xpath)
+                        if btns and btns[0].is_displayed():
+                            btns[0].click()
+                            time.sleep(1)
+                    except: pass
 
-                # Stay in guest mode / dismiss login prompts
-                stay_btns = self.driver.find_elements(By.XPATH, "//button[contains(., 'Stay in guest mode')]")
-                if stay_btns:
-                    stay_btns[0].click()
-                    time.sleep(1)
+                # "Join ChatGPT" Close button (CSS)
+                try:
+                    join_close = self.driver.find_elements(By.CSS_SELECTOR, "button[aria-label='Close']")
+                    if join_close and join_close[0].is_displayed():
+                        join_close[0].click()
+                        time.sleep(1)
+                except: pass
 
             # 3. Gemini specific overlays
             elif self.provider == "Gemini":
@@ -182,39 +189,26 @@ class BrowserLLM:
 
 
     def new_chat(self):
-        """Attempts to start a new chat session by opening a fresh tab and closing the old one."""
+        """Attempts to start a new chat session by navigating the current tab to the base provider URL."""
         try:
-            # Safely open a new tab first so the browser doesn't die when we close the old one
-            self.driver.execute_script("window.open('about:blank');")
-            new_handle = self.driver.window_handles[-1]
-            
-            # Close ALL other tabs for this provider to prevent context leakage or confusion
             url = self.PROVIDERS[self.provider]
-            # If ChatGPT, use the specific new chat URL
             if self.provider == "ChatGPT":
                 url = "https://chatgpt.com/?model=auto"
-
-            handles = list(self.driver.window_handles)
-            for handle in handles:
-                if handle == new_handle: continue
-                try:
-                    self.driver.switch_to.window(handle)
-                    current_url = self.driver.current_url
-                    if "chatgpt.com" in current_url or "gemini.google.com" in current_url or "about:blank" in current_url or "data:" in current_url:
-                         if len(self.driver.window_handles) > 1:
-                            self.driver.close()
-                except: pass
             
-            # Switch to the fresh tab
-            self.driver.switch_to.window(new_handle)
-            self.tab_handle = new_handle
+            self._ensure_tab()
+            self.driver.switch_to.window(self.tab_handle)
             
+            # Navigate to the fresh URL
             self.driver.get(url)
             self._wait_for_page_load()
             return True
         except Exception as e:
-            logger.warning(f"Failed to start new chat via tab cycle: {e}")
-            pass
+            logger.warning(f"Failed to start new chat via navigation: {e}")
+            # Fallback to hard refresh
+            try:
+                self.driver.refresh()
+                time.sleep(3)
+            except: pass
         return False
 
     def ask(self, prompt, timeout=120, done_signal=None):
@@ -251,23 +245,21 @@ class BrowserLLM:
         if done_signal is None:
             done_signal = '"status"'
         try:
-            # Check if user is on the logged-out ChatGPT screen
-            # Check if user is stuck on a join/login screen without a prompt box
+            # Check for barriers (login walls, rate limits, guest mode blocks)
             try:
-                prompt_exists = len(self.driver.find_elements(By.ID, "prompt-textarea")) > 0
                 page_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+                prompt_exists = len(self.driver.find_elements(By.ID, "prompt-textarea")) > 0
                 
-                # If we see "Log in" and NO prompt area, we are definitely stuck
-                if not prompt_exists and ("log in" in page_text and "sign up" in page_text):
-                    return "ERROR: ChatGPT is asking for login. Headless Guest mode might be restricted. Please use 'Login to AI' to set up a session."
+                if not prompt_exists:
+                    if "log in" in page_text and "sign up" in page_text:
+                        return "ERROR: ChatGPT is asking for login. Guest mode might be restricted. Please use 'Login to AI' to set up a session."
+                    if "too many requests" in page_text or "reached your limit" in page_text:
+                        return "ERROR: ChatGPT rate limit reached. Please wait or log in to a ChatGPT Plus account."
+                    if "something went wrong" in page_text:
+                        self.driver.refresh()
+                        time.sleep(5)
                 
-                # Handle the "Join ChatGPT" overlay if it appears
-                try:
-                    join_close = self.driver.find_elements(By.CSS_SELECTOR, "button[aria-label='Close']")
-                    if join_close:
-                        join_close[0].click()
-                        time.sleep(1)
-                except: pass
+                self._handle_overlays()
             except:
                 pass
                 

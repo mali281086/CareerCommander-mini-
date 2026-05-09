@@ -294,8 +294,8 @@ def render_explorer_view(db):
                                 st.write(f"❌ Failed: {job['company']} ({err[:30]}...)")
                         except Exception as e:
                             st.write(f"❌ Error on {job['company']}: {e}")
-                        # Small stabilizing delay between jobs
-                        time.sleep(2)
+                        # Stabilizing delay between jobs
+                        time.sleep(4)
                 finally:
                     browser_llm.close_tab()
                 status.update(label="✅ Batch Analysis Complete!", state="complete")
@@ -794,7 +794,7 @@ def render_batch_analysis_confirm(jobs_to_analyze_df, db):
                 
                 progress_bar.progress((i + 1) / len(jobs_to_process))
                 # Stabilizing delay between jobs
-                time.sleep(3)
+                time.sleep(4)
 
         except Exception as e:
             st.error(f"Batch Analysis aborted due to error: {e}")

@@ -2,6 +2,9 @@ from tools.logger import logger
 import os
 import re
 import json
+import uuid
+import random
+import time
 from tools.browser_llm import BrowserLLM
 
 class JobAnalysisCrew:
@@ -117,13 +120,16 @@ class JobAnalysisCrew:
             browser_llm.new_chat()
 
         # Unique Analysis ID to prevent LLM from being "lazy" and referring to previous context
-        import uuid
         if analysis_id is None:
             analysis_id = str(uuid.uuid4())[:8]
+
+        # Add human-like variation
+        time.sleep(random.uniform(1, 3))
 
         # Construct a combined prompt
         prompt = f"""
 ANALYSIS_ID: {analysis_id}
+TIMESTAMP: {time.time()}
 
 I need you to perform a job analysis based on the following Job Description and my Resume.
 
