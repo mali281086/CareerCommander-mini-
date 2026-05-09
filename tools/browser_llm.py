@@ -138,6 +138,22 @@ class BrowserLLM:
         """Waits for the LLM page to load specifically for prompt area."""
         try:
             wait = WebDriverWait(self.driver, 20)
+
+            # Detect and handle 431 Request Header Fields Too Large or other browser errors
+            for _ in range(2): # Try recovery up to twice
+                try:
+                    page_text = self.driver.find_element(By.TAG_NAME, "body").text
+                    if "431" in page_text or "header" in page_text.lower() or "too large" in page_text.lower():
+                        logger.warning("Detected 431 Error (Headers too large). Attempting to clear state and reload...")
+                        self.driver.delete_all_cookies()
+                        self.driver.execute_script("window.localStorage.clear();")
+                        self.driver.execute_script("window.sessionStorage.clear();")
+                        self.driver.refresh()
+                        time.sleep(5)
+                        continue
+                    break
+                except: break
+
             self._handle_overlays()
 
             if self.provider == "ChatGPT":
@@ -251,6 +267,18 @@ class BrowserLLM:
                 prompt_exists = len(self.driver.find_elements(By.ID, "prompt-textarea")) > 0
                 
                 if not prompt_exists:
+                    if "431" in page_text or "too large" in page_text:
+                        logger.warning("Detected 431 Error during prompt. Clearing state and reloading...")
+                        self.driver.delete_all_cookies()
+                        self.driver.execute_script("window.localStorage.clear();")
+                        self.driver.get("https://chatgpt.com/?model=auto")
+                        time.sleep(5)
+                        self._wait_for_page_load()
+                        # Retry once after clearing
+                        prompt_exists = len(self.driver.find_elements(By.ID, "prompt-textarea")) > 0
+                        if not prompt_exists:
+                             return "ERROR: ChatGPT 431 Header Error persisted after state clear. Please restart the app."
+
                     if "log in" in page_text and "sign up" in page_text:
                         return "ERROR: ChatGPT is asking for login. Guest mode might be restricted. Please use 'Login to AI' to set up a session."
                     if "too many requests" in page_text or "reached your limit" in page_text:
