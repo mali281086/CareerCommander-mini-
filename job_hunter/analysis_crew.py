@@ -15,22 +15,36 @@ class JobAnalysisCrew:
         if not text or not isinstance(text, str):
             return {}
 
+        def try_parse(json_str):
+            try:
+                # Cleanup trailing commas in objects and arrays before parsing
+                json_str = re.sub(r",\s*\}", "}", json_str)
+                json_str = re.sub(r",\s*\]", "]", json_str)
+                data = json.loads(json_str)
+                if isinstance(data, dict):
+                    return data
+            except:
+                pass
+            return None
+
+        best_data = {}
+
         try:
-            # 1. Try finding Markdown code blocks - take the LAST one to avoid prompt examples
+            # 1. Try finding Markdown code blocks
             matches = re.findall(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
-            if matches:
-                for inner_text in reversed(matches):
-                    try:
-                        data = json.loads(inner_text.strip())
-                        if isinstance(data, dict) and len(data) >= 2:
-                            return data
-                    except:
-                        pass
+            for inner_text in matches:
+                data = try_parse(inner_text.strip())
+                if data and len(data) > len(best_data):
+                    best_data = data
+
+            if best_data and len(best_data) >= 3: # If we have a good match from markdown, use it
+                return best_data
 
             # 2. String-aware brace counting to extract JSON from dirty text
-            # Search from the end to find the last valid JSON block
+            # We want to find the LARGEST valid JSON object (likely the root)
             starts = [i for i, char in enumerate(text) if char == '{']
-            for start in reversed(starts):
+
+            for start in starts:
                 count = 0
                 in_string = False
                 escape = False
@@ -42,7 +56,7 @@ class JobAnalysisCrew:
                         escape = False
                         continue
                         
-                    if c == '\\\\':
+                    if c == '\\': # Fixed escape check
                         escape = True
                         continue
                         
@@ -56,24 +70,20 @@ class JobAnalysisCrew:
                         
                         if count == 0:
                             potential_json = text[start:i+1]
-                            try:
-                                # Cleanup trailing commas before parsing
-                                potential_json = re.sub(r",\s*\}", "}", potential_json)
-                                data = json.loads(potential_json)
-                                if isinstance(data, dict) and len(data) >= 2:
-                                    return data
-                            except:
-                                pass
-                            break
+                            data = try_parse(potential_json)
+                            if data and len(data) > len(best_data):
+                                best_data = data
+                            break # Move to next 'start'
 
-            # 3. Final fallback
+            if best_data:
+                return best_data
+
+            # 3. Final fallback: Extreme match
             start = text.find('{')
             end = text.rfind('}')
             if start != -1 and end != -1 and end > start:
-                try:
-                    return json.loads(text[start:end+1])
-                except:
-                    pass
+                data = try_parse(text[start:end+1])
+                if data: return data
 
             return {}
         except Exception as e:
