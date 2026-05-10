@@ -277,7 +277,7 @@ def render_explorer_view(db):
                         # JD Fallback matches single analysis mode
                         jd = job.get('rich_description') or job.get('description', '')
                         context = f"Title: {job['title']}\nCompany: {job['company']}\nJD: {jd}"
-                        
+
                         try:
                             crew = JobAnalysisCrew(context, resume_data.get('text', ''))
                             # clear_chat=True ensures each job in the batch starts fresh
@@ -645,12 +645,24 @@ def render_chat_tab(job, resume_name, resume_data, analysis_results, db):
                 from tools.browser_llm import BrowserLLM
                 bot_config = db.load_bot_config()
                 headless = bot_config.get("settings", {}).get("ai_headless", True)
-                browser_llm = BrowserLLM(provider="ChatGPT", headless=headless)
+                # Use llm_profile to share session with Analysis
+                browser_llm = BrowserLLM(provider="ChatGPT", profile_name="llm_profile", headless=headless)
+
+                # Start fresh for chat
+                browser_llm.new_chat()
+
                 jd = job.get('rich_description', '')
                 context = f"Job: {job['title']} at {job['company']}\nJD: {jd}\nResume: {resume_data.get('text', '')}"
-                prompt = f"Context:\n{context}\n\nQuestion: {user_query}\nAnswer in 2-3 sentences max."
-                response = browser_llm.ask(prompt)
-                st.write(response)
+                prompt = f"Context:\n{context}\n\nQuestion: {user_query}\nAnswer in 2-3 sentences max. Do NOT use markdown code blocks."
+
+                # Use a shorter timeout and no status-signal for conversational chat
+                response = browser_llm.ask(prompt, timeout=60, done_signal=" ")
+
+                if response.startswith("ERROR:"):
+                    st.error(response)
+                else:
+                    st.write(response)
+
                 browser_llm.close_tab()
                 st.session_state.chat_history[job_id].append({"role": "assistant", "content": response})
                 if job_id not in st.session_state['job_cache']: st.session_state['job_cache'][job_id] = {}

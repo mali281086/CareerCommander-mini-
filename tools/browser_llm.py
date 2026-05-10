@@ -142,25 +142,37 @@ class BrowserLLM:
             # Detect and handle 431 Request Header Fields Too Large or other browser errors
             for _ in range(2): # Try recovery up to twice
                 try:
-                    # Check both page text and title for error markers
-                    page_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+                    # Check title and page source for error markers
                     page_title = self.driver.title.lower()
+                    page_source = self.driver.page_source.lower()
 
-                    if "431" in page_text or "too large" in page_text or "431" in page_title:
+                    is_431 = "431" in page_title or "431" in page_source or "too large" in page_source
+
+                    if is_431:
                         logger.warning("Detected 431 Error (Headers too large). Performing deep reset...")
 
-                        # 1. Clear everything
+                        # 1. Try clicking the browser's native Reload button if it exists (for Chrome/Edge pages)
+                        try:
+                            reload_btns = self.driver.find_elements(By.ID, "reload-button")
+                            if reload_btns:
+                                reload_btns[0].click()
+                                time.sleep(5)
+                                # Re-check
+                                if "431" not in self.driver.title: continue
+                        except: pass
+
+                        # 2. Clear everything
                         self.driver.delete_all_cookies()
                         try:
                             self.driver.execute_script("window.localStorage.clear();")
                             self.driver.execute_script("window.sessionStorage.clear();")
-                        except: pass # Might fail on native error pages
+                        except: pass
 
-                        # 2. Hard navigation to about:blank first to truly clear the view
+                        # 3. Hard reset via about:blank
                         self.driver.get("about:blank")
                         time.sleep(1)
 
-                        # 3. Navigate back to provider
+                        # 4. Return to provider
                         url = self.PROVIDERS[self.provider]
                         if self.provider == "ChatGPT": url = "https://chatgpt.com/?model=auto"
                         self.driver.get(url)
@@ -168,7 +180,6 @@ class BrowserLLM:
                         continue
                     break
                 except Exception as e:
-                    # If we can't even read the body, might be a hard browser crash or restricted page
                     if "431" in self.driver.title:
                          self.driver.delete_all_cookies()
                          self.driver.get("about:blank")
@@ -287,11 +298,12 @@ class BrowserLLM:
         try:
             # Check for barriers (login walls, rate limits, guest mode blocks)
             try:
-                page_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+                page_source = self.driver.page_source.lower()
+                page_title = self.driver.title.lower()
                 prompt_exists = len(self.driver.find_elements(By.ID, "prompt-textarea")) > 0
                 
                 if not prompt_exists:
-                    if "431" in page_text or "too large" in page_text or "431" in self.driver.title:
+                    if "431" in page_source or "too large" in page_source or "431" in page_title:
                         logger.warning("Detected 431 Error during prompt. Clearing state and reloading...")
                         self.driver.delete_all_cookies()
                         try:
@@ -302,11 +314,12 @@ class BrowserLLM:
                         self.driver.get("https://chatgpt.com/?model=auto")
                         time.sleep(5)
                         self._wait_for_page_load()
-                        # Retry once after clearing
+                        # Re-verify
+                        if "431" in self.driver.title or "431" in self.driver.page_source:
+                             return "ERROR: ChatGPT 431 Header Error persisted. Automation blocked."
                         prompt_exists = len(self.driver.find_elements(By.ID, "prompt-textarea")) > 0
-                        if not prompt_exists:
-                             return "ERROR: ChatGPT 431 Header Error persisted after state clear. Please restart the app."
 
+                    page_text = self.driver.find_element(By.TAG_NAME, "body").text.lower()
                     if "log in" in page_text and "sign up" in page_text:
                         return "ERROR: ChatGPT is asking for login. Guest mode might be restricted. Please use 'Login to AI' to set up a session."
                     if "too many requests" in page_text or "reached your limit" in page_text:

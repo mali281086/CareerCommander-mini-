@@ -197,41 +197,47 @@ Specific Instructions:
 """
 
         max_retries = 2
+        results = {}
+
         for attempt in range(max_retries + 1):
             response_text = browser_llm.ask(prompt, timeout=400)
 
             if response_text.startswith("ERROR:"):
-                # If it's a hard crash of the browser, try to recreate and retry
-                if "invalid session id" in response_text.lower() or "stacktrace:" in response_text.lower() or "element not interactable" in response_text.lower():
+                # 1. Hard Driver Crash
+                if any(x in response_text.lower() for x in ["invalid session id", "stacktrace:", "no such window"]):
                     if attempt < max_retries:
-                        logger.warning(f"[AnalysisCrew] Browser crash detected: {response_text[:100]}. Retrying ({attempt+1}/{max_retries})...")
-                        # Force close the corrupted driver via BrowserManager
+                        logger.warning(f"[AnalysisCrew] Hard crash detected. Restarting driver (Retry {attempt+1})...")
                         from tools.browser_manager import BrowserManager
                         BrowserManager().close_driver()
-                        # Recreate BrowserLLM with a completely fresh driver
                         browser_llm = BrowserLLM(provider=provider, profile_name="llm_profile", headless=headless)
                         browser_llm.new_chat()
                         continue
                 
-                if close_after:
-                    browser_llm.close_tab()
+                # 2. Recoverable Timeout / Navigation error
+                if any(x in response_text.lower() for x in ["timeout", "failed to extract", "interactable"]):
+                    if attempt < max_retries:
+                        logger.warning(f"[AnalysisCrew] Soft error detected. Refreshing chat (Retry {attempt+1})...")
+                        browser_llm.new_chat()
+                        continue
+
+                # Unrecoverable or out of retries
+                if close_after: browser_llm.close_tab()
                 return {"error": response_text}
             
-            # If we succeed without an ERROR string, break out of retry loop
+            # 3. Analyze content quality
+            results = self._clean_json(response_text)
+
+            is_empty = not results or (isinstance(results, dict) and len(results) <= 1 and "status" in results)
+            lazy_count = response_text.count("...")
+            is_lazy = lazy_count > 5 and len(response_text) < 1000
+
+            if (is_empty or is_lazy) and attempt < max_retries:
+                logger.warning(f"[AnalysisCrew] Results were {'empty' if is_empty else 'lazy'}. Retrying with fresh chat...")
+                browser_llm.new_chat()
+                continue
+
+            # If we reach here, we have either a good result or we've run out of retries
             break
-
-        results = self._clean_json(response_text)
-        
-        # Check for "lazy" or empty responses and retry once if needed
-        is_empty = not results or (isinstance(results, dict) and len(results) <= 1 and "status" in results)
-        lazy_count = response_text.count("...")
-        is_lazy = lazy_count > 5 and len(response_text) < 1000
-
-        if (is_empty or is_lazy) and not close_after:
-             logger.warning(f"[AnalysisCrew] Response was {'empty' if is_empty else 'lazy'}. Retrying with new chat...")
-             browser_llm.new_chat()
-             response_text = browser_llm.ask(prompt, timeout=400)
-             results = self._clean_json(response_text)
 
         if not results or (isinstance(results, dict) and len(results) <= 1 and "status" in results):
             snippet = response_text[:200].replace('\n', ' ')
