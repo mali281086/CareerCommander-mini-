@@ -209,7 +209,7 @@ class BrowserLLM:
         try:
             url = self.PROVIDERS[self.provider]
             if self.provider == "ChatGPT":
-                url = "https://chatgpt.com/?model=auto"
+                url = "https://chatgpt.com/"
             
             self._ensure_tab()
             self.driver.switch_to.window(self.tab_handle)
