@@ -349,13 +349,14 @@ def render_explorer_view(db):
         st.markdown(f"### {title_label}")
         
         # Header Row
-        h_cols = st.columns([0.4, 3.2, 1.8, 1.2, 1.0, 4.2])
+        h_cols = st.columns([0.4, 3.0, 1.5, 1.5, 1.0, 0.8, 4.2])
         h_cols[0].write("**Sel**")
         h_cols[1].write("**Job Title**")
         h_cols[2].write("**Company**")
-        h_cols[3].write("**Fit %**")
-        h_cols[4].write("**Type**")
-        h_cols[5].write("**Actions**")
+        h_cols[3].write("**Location**")
+        h_cols[4].write("**Fit %**")
+        h_cols[5].write("**Type**")
+        h_cols[6].write("**Actions**")
 
         for idx, row in enumerate(jobs):
             job_id = f"{row['title']}-{row['company']}"
@@ -370,7 +371,7 @@ def render_explorer_view(db):
             is_analyzed = full_job_id in cache and "error" not in cache[full_job_id] and "ats_report" in cache[full_job_id]
             results = cache.get(full_job_id, {})
 
-            row_cols = st.columns([0.4, 3.2, 1.8, 1.2, 1.0, 4.2])
+            row_cols = st.columns([0.4, 3.0, 1.5, 1.5, 1.0, 0.8, 4.2])
             
             # 1. Selection Checkbox
             if row_cols[0].checkbox("Select", value=is_selected, key=f"sel_{job_id}_{idx}_{title_label}", label_visibility="collapsed"):
@@ -390,17 +391,20 @@ def render_explorer_view(db):
             # 3. Company
             row_cols[2].write(row['company'])
 
-            # 4. Fit %
+            # 4. Location
+            row_cols[3].write(row.get('location', 'N/A'))
+
+            # 5. Fit %
             fit_score = "N/A"
             if is_analyzed and "fit_report" in results:
                 fit_score = f"{results['fit_report'].get('score', 'N/A')}%"
-            row_cols[3].write(fit_score)
+            row_cols[4].write(fit_score)
 
-            # 5. Type
-            row_cols[4].write("Easy Apply" if row['is_easy_apply'] else "Standard")
+            # 6. Type
+            row_cols[5].write("Easy Apply" if row['is_easy_apply'] else "Standard")
 
-            # 6. Actions
-            act_cols = row_cols[5].columns(8)
+            # 7. Actions
+            act_cols = row_cols[6].columns(8)
             
             # 1. AI Analysis
             has_cl = "cover_letter" in results and results["cover_letter"]
